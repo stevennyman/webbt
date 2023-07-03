@@ -279,6 +279,32 @@ async function writeValue(port, gattId, service, characteristic, value) {
     });
 }
 
+async function writeValueWithResponse(port, gattId, service, characteristic, value) {
+    if (!(value instanceof Array) || !value.every(item => typeof item === 'number')) {
+        throw new Error('Invalid argument: value');
+    }
+
+    return await nativeRequest('write', {
+        device: gattId,
+        service: windowsServiceUuid(service),
+        characteristic: windowsCharacteristicUuid(characteristic),
+        value,
+    });
+}
+
+async function writeValueWithoutResponse(port, gattId, service, characteristic, value) {
+    if (!(value instanceof Array) || !value.every(item => typeof item === 'number')) {
+        throw new Error('Invalid argument: value');
+    }
+
+    return await nativeRequest('write', {
+        device: gattId,
+        service: windowsServiceUuid(service),
+        characteristic: windowsCharacteristicUuid(characteristic),
+        value,
+    });
+}
+
 async function startNotifications(port, gattId, service, characteristic) {
     const subscriptionId = await nativeRequest('subscribe', {
         device: gattId,
