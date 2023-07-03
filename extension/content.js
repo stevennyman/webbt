@@ -112,7 +112,7 @@ class DeviceChooserUI {
 
             </style>
 
-            <div id="chooser-dialog">
+            <dialog id="chooser-dialog">
                 <span id="hostname"> </span> wants to pair
                 <div id="device-list">
                 </div>
@@ -123,13 +123,14 @@ class DeviceChooserUI {
                 <div id="footer">
                     Powered by <a href="https://github.com/urish/web-bluetooth-polyfill" target="_blank">Web Bluetooth Polyfill</a>
                 </div>
-            </div>
+            </dialog>
         `;
 
         this.btnPair = shadowRoot.getElementById('btn-pair');
         this.deviceListElement = shadowRoot.getElementById('device-list');
+        this.chooserDialog = shadowRoot.getElementById('chooser-dialog');
 
-        shadowRoot.getElementById('chooser-dialog').addEventListener('click', e => e.stopPropagation());
+        this.chooserDialog.addEventListener('click', e => e.stopPropagation());
         shadowRoot.getElementById('hostname').innerText = document.location.hostname;
         shadowRoot.getElementById('btn-cancel').addEventListener('click', () => this.cancel());
         this.btnPair.addEventListener('click', () => this.pair());
@@ -141,6 +142,7 @@ class DeviceChooserUI {
             this.deviceListElement.removeChild(this.deviceListElement.firstChild);
         }
         document.body.appendChild(this.container);
+        this.chooserDialog.showModal();
         // TODO listen for escape key to close the dialog
     }
 
@@ -198,4 +200,3 @@ class DeviceChooserUI {
 var script = document.createElement('script');
 script.src = chrome.extension.getURL('polyfill.js');
 document.documentElement.appendChild(script);
-
