@@ -7,6 +7,7 @@
 #include <iostream>
 #include <Windows.Foundation.h>
 #include <Windows.Devices.Bluetooth.h>
+#include <Windows.Devices.Enumeration.h>
 #include <Windows.Devices.Bluetooth.Advertisement.h>
 #include <Windows.Data.JSON.h>
 #include <wrl/wrappers/corewrappers.h>
@@ -88,6 +89,15 @@ concurrency::task<IJsonValue^> connectRequest(JsonObject ^command) {
 	auto device = co_await Bluetooth::BluetoothLEDevice::FromBluetoothAddressAsync(address);
 	if (device == nullptr) {
 		throw ref new FailureException(ref new String(L"Device not found (null)"));
+	}
+	// Try to pair the device if needed; todo: upgrade security level if unable to access service
+	if (device->DeviceInformation->Pairing->CanPair && !(device->DeviceInformation->Pairing->IsPaired)) {
+		auto pair_status = co_await device->DeviceInformation->Pairing->PairAsync();
+		throw ref new FailureException((pair_status->Status).ToString());
+		if (pair_status->Status != Enumeration::DevicePairingResultStatus::Paired && pair_status->Status != Enumeration::DevicePairingResultStatus::AlreadyPaired) {
+			// todo: more specific error message
+			throw ref new FailureException(ref new String(L"Unable to pair"));
+		}
 	}
 	devices->Insert(device->DeviceId, device);
 	device->ConnectionStatusChanged += ref new Windows::Foundation::TypedEventHandler<Bluetooth::BluetoothLEDevice ^, Platform::Object ^>(
