@@ -100,6 +100,14 @@ concurrency::task<IJsonValue^> connectRequest(JsonObject ^command) {
 			devices->Remove(device->DeviceId);
 		}
 	});
+	// Force a connection upon device selection
+	// https://learn.microsoft.com/en-us/uwp/api/windows.devices.bluetooth.bluetoothledevice.frombluetoothaddressasync?view=winrt-19041#windows-devices-bluetooth-bluetoothledevice-frombluetoothaddressasync(system-uint64)
+	auto services = co_await device->GetGattServicesAsync(Bluetooth::BluetoothCacheMode::Uncached);
+	if (services->Status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success) {
+		// todo: more specific error message
+		// https://learn.microsoft.com/en-us/uwp/api/windows.devices.bluetooth.genericattributeprofile.gattcommunicationstatus?view=winrt-19041
+		throw ref new FailureException(ref new String(L"Unable to connect"));
+	}
 	return JsonValue::CreateStringValue(device->DeviceId);
 }
 
