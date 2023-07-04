@@ -1,11 +1,10 @@
 {
     "name": "Web Bluetooth Polyfill",
-    "description": "Windows 10 Web Bluetooth API Polyfill",
+    "description": "Firefox Web Bluetooth API Polyfill",
     "permissions": [
         "nativeMessaging",
         "tabs",
         "activeTab",
-        "background",
         "http://*/",
         "https://*/"
     ],
@@ -23,8 +22,8 @@
         {
             "matches": [
                 "https://*/*",
-                "http://localhost:*/*",
-                "http://127.0.0.1:*/*"
+                "http://localhost/*",
+                "http://127.0.0.1/*"
             ],
             "js": [
                 "content.js"
@@ -37,6 +36,10 @@
         "default_title": "Web Bluetooth Polyfill"
     },
     "version": "0.4.0",
-    "minimum_chrome_version": "56",
-    "manifest_version": 2
+    "manifest_version": 2,
+    "browser_specific_settings": {
+        "gecko": {
+          "id": "web-bluetooth-polyfill@ff"
+        }
+      }
 }

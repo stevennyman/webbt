@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 
-const nativePort = chrome.runtime.connectNative('org.urish.web_bluetooth.server');
+const nativePort = chrome.runtime.connectNative('web_bluetooth.server');
 let debugPrints = false;
 
 let requestId = 0;
