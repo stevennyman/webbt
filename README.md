@@ -1,14 +1,6 @@
-# Windows 10 Web Bluetooth Polyfill
+# Web Bluetooth for Firefox
 
-The Polyfill enables Web Bluetooth in Chrome on Windows 10. 
-
-[![Build Status](https://travis-ci.org/urish/web-bluetooth-polyfill.png?branch=master)](https://travis-ci.org/urish/web-bluetooth-polyfill)
-
-## Depracted - Web Bluetooth is now available in Chrome
-
-Native Web Bluetooth support is [now available on Chrome for Windows](https://github.com/WebBluetoothCG/web-bluetooth/blob/master/implementation-status.md#chrome).
-
-**This polyfill is no longer required and is now deprecated.**
+The Polyfill extension enables Web Bluetooth in Firefox on Windows 10 and Windows 11. 
 
 ## Installation
 
@@ -37,7 +29,7 @@ That's it! Enjoy Web Bluetooth on Windows :-)
 
 TL;DR - Should work out of the box with most Web Bluetooth apps.
 
-Most of the functionality is already there, but there might be slight differences between the current implementation and the spec. Device Chooser UI is still missing, so the first matching device is picked up automatically. Check out the [list of issues](https://github.com/urish/web-bluetooth-polyfill/issues) to see what is currently still missing. Pull Requests are very welcome!
+Most of the functionality is already there, but there might be slight differences between the current implementation and the spec. Check out the [list of issues](https://github.com/urish/web-bluetooth-polyfill/issues) to see what is currently still missing. Pull Requests are very welcome!
 
 List of API methods / events and their implementation status:
 

@@ -1,6 +1,6 @@
 {
   "name": "web-bluetooth-polyfill",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Web Bluetooth Polyfill",
   "main": "background.js",
   "scripts": {
@@ -17,7 +17,7 @@
     "web",
     "bluetooth"
   ],
-  "author": "Uri Shaked",
+  "author": "Steven Nyman",
   "license": "ISC",
   "bugs": {
     "url": "https://github.com/urish/web-bluetooth-polyfill/issues"
