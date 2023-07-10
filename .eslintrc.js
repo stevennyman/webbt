@@ -5,6 +5,8 @@ module.exports = {
     "globals": {
         "chrome": false,
         "console": false,
+        "confirm": false,
+        "prompt": false,
         "STANDARD_GATT_SERVICES": true,
         "STANDARD_GATT_CHARACTERISTICS": true,
     },

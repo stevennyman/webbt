@@ -5,9 +5,13 @@ let debugPrints = false;
 
 let requestId = 0;
 let requests = {};
-async function nativeRequest(cmd, params) {
+
+let commandPorts = {};
+
+async function nativeRequest(cmd, params, port = null) {
     return new Promise((resolve, reject) => {
         requests[requestId] = { resolve, reject };
+        commandPorts[requestId] = port;
         const msg = Object.assign(params || {}, {
             cmd,
             _id: requestId++,
@@ -25,7 +29,11 @@ nativePort.onMessage.addListener((msg) => {
     if (debugPrints) {
         console.log('Received native message:', msg);
     }
+    if (msg.pairingType && commandPorts[msg._id]) {
+        commandPorts[msg._id].postMessage(msg);
+    }
     if (msg._type === 'response' && requests[msg._id]) {
+        delete commandPorts[msg._id];
         const { reject, resolve } = requests[msg._id];
         if (msg.error) {
             reject(msg.error);
@@ -198,7 +206,7 @@ async function gattConnect(port, address) {
         throw new Error('Unknown device address');
     }
 
-    const gattId = await nativeRequest('connect', { address: address.replace(/:/g, '') });
+    const gattId = await nativeRequest('connect', { address: address.replace(/:/g, '') }, port);
     portsObjects.get(port).devices.add(gattId);
     if (!devices[gattId]) {
         devices[gattId] = new Set();
@@ -213,7 +221,7 @@ async function gattDisconnect(port, gattId) {
     if (devices[gattId].size === 0) {
         delete characteristicCache[gattId];
         delete devices[gattId];
-        return await nativeRequest('disconnect', { device: gattId });
+        return await nativeRequest('disconnect', { device: gattId }, port);
     }
 }
 
@@ -226,7 +234,7 @@ async function getPrimaryServices(port, gattId, service) {
     if (service) {
         options.service = windowsServiceUuid(service);
     }
-    const services = await nativeRequest('services', options);
+    const services = await nativeRequest('services', options, port);
     return services.map(normalizeServiceUuid);
 }
 
@@ -246,7 +254,7 @@ async function getCharacteristics(port, gattId, service, characteristic) {
         characteristicCache[gattId][service] = nativeRequest('characteristics', {
             device: gattId,
             service: windowsServiceUuid(service),
-        });
+        }, port);
     }
     const result = await characteristicCache[gattId][service];
     const characterstics = result.map(c => Object.assign({}, c, { uuid: normalizeCharacteristicUuid(c.uuid) }));
@@ -263,7 +271,7 @@ async function readValue(port, gattId, service, characteristic) {
         device: gattId,
         service: windowsServiceUuid(service),
         characteristic: windowsCharacteristicUuid(characteristic),
-    });
+    }, port);
 }
 
 async function writeValue(port, gattId, service, characteristic, value) {
@@ -276,7 +284,7 @@ async function writeValue(port, gattId, service, characteristic, value) {
         service: windowsServiceUuid(service),
         characteristic: windowsCharacteristicUuid(characteristic),
         value,
-    });
+    }, port);
 }
 
 async function writeValueWithResponse(port, gattId, service, characteristic, value) {
@@ -289,7 +297,7 @@ async function writeValueWithResponse(port, gattId, service, characteristic, val
         service: windowsServiceUuid(service),
         characteristic: windowsCharacteristicUuid(characteristic),
         value,
-    });
+    }, port);
 }
 
 async function writeValueWithoutResponse(port, gattId, service, characteristic, value) {
@@ -302,7 +310,7 @@ async function writeValueWithoutResponse(port, gattId, service, characteristic, 
         service: windowsServiceUuid(service),
         characteristic: windowsCharacteristicUuid(characteristic),
         value,
-    });
+    }, port);
 }
 
 async function startNotifications(port, gattId, service, characteristic) {
@@ -310,7 +318,7 @@ async function startNotifications(port, gattId, service, characteristic) {
         device: gattId,
         service: windowsServiceUuid(service),
         characteristic: windowsCharacteristicUuid(characteristic),
-    });
+    }, port);
 
     subscriptions[subscriptionId] = port;
     portsObjects.get(port).subscriptions.add(subscriptionId);
@@ -322,11 +330,27 @@ async function stopNotifications(port, gattId, service, characteristic) {
         device: gattId,
         service: windowsServiceUuid(service),
         characteristic: windowsCharacteristicUuid(characteristic),
-    });
+    }, port);
 
     delete subscriptions[subscriptionId];
     portsObjects.get(port).subscriptions.delete(subscriptionId);
     return subscriptionId;
+}
+
+async function accept(port, _id) {
+    return await nativeRequest('accept', { origId: _id });
+}
+
+async function acceptPasswordCredential(port, _id, username, password) {
+    return await nativeRequest('acceptPasswordCredential', { origId: _id, username: username, password: password });
+}
+
+async function acceptPin(port, _id, pin) {
+    return await nativeRequest('acceptPin', { origId: _id, pin: pin });
+}
+
+async function cancel(port, _id) {
+    return await nativeRequest('cancel', { origId: _id });
 }
 
 const exportedMethods = {
@@ -339,8 +363,14 @@ const exportedMethods = {
     getCharacteristics,
     readValue,
     writeValue,
+    writeValueWithResponse,
+    writeValueWithoutResponse,
     startNotifications,
     stopNotifications,
+    accept,
+    acceptPasswordCredential,
+    acceptPin,
+    cancel,
 };
 
 chrome.runtime.onConnect.addListener((port) => {

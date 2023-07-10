@@ -1,7 +1,7 @@
-// BLEServer.cpp : Windows 10 Web Bluetooth Polyfill Server
+// BLEServer.cpp : Firefox Windows 10 Web Bluetooth Polyfill Server
 //
-// Copyright (C) 2017, Uri Shaked. License: MIT.
-//
+// Copyright (C) 2023, Steven Nyman. License: MIT.
+// Original Copyright (C) 2017, Uri Shaked. License: MIT.
 
 #include "stdafx.h"
 #include <iostream>
@@ -9,6 +9,7 @@
 #include <Windows.Devices.Bluetooth.h>
 #include <Windows.Devices.Enumeration.h>
 #include <Windows.Devices.Bluetooth.Advertisement.h>
+#include <Windows.Security.Credentials.h>
 #include <Windows.Data.JSON.h>
 #include <wrl/wrappers/corewrappers.h>
 #include <wrl/event.h>
@@ -28,12 +29,17 @@
 using namespace Platform;
 using namespace Windows::Devices;
 using namespace Windows::Data::Json;
+using namespace Windows::Security::Credentials;
 
 Bluetooth::Advertisement::BluetoothLEAdvertisementWatcher^ bleAdvertisementWatcher;
 auto devices = ref new Collections::Map<String^, Bluetooth::BluetoothLEDevice^>();
 auto characteristicsMap = ref new Collections::Map<String^, Bluetooth::GenericAttributeProfile::GattCharacteristic^>();
 auto characteristicsListenerMap = ref new Collections::Map<String^, Windows::Foundation::EventRegistrationToken>();
 auto characteristicsSubscriptionMap = ref new Collections::Map<String^, JsonValue^>();
+
+auto pairingRequestWaiting = ref new Collections::Map<double, String^>();
+auto pairingRequestUsername = ref new Collections::Map<double, String^>();
+auto pairingRequestPasswordPIN = ref new Collections::Map<double, String^>();
 
 std::wstring formatBluetoothAddress(unsigned long long BluetoothAddress) {
 	std::wostringstream ret;
@@ -83,33 +89,25 @@ void writeObject(JsonObject^ jsonObject) {
 	LeaveCriticalSection(&OutputCriticalSection);
 }
 
-concurrency::task<IJsonValue^> connectRequest(JsonObject ^command) {
-	String ^addressStr = command->GetNamedString("address", "");
+concurrency::task<IJsonValue^> connectRequest(JsonObject^ command) {
+	String^ addressStr = command->GetNamedString("address", "");
 	unsigned long long address = std::stoull(addressStr->Data(), 0, 16);
 	auto device = co_await Bluetooth::BluetoothLEDevice::FromBluetoothAddressAsync(address);
 	if (device == nullptr) {
 		throw ref new FailureException(ref new String(L"Device not found (null)"));
 	}
-	// Try to pair the device if needed; todo: upgrade security level if unable to access service
-	if (device->DeviceInformation->Pairing->CanPair && !(device->DeviceInformation->Pairing->IsPaired)) {
-		auto pair_status = co_await device->DeviceInformation->Pairing->PairAsync();
-		throw ref new FailureException((pair_status->Status).ToString());
-		if (pair_status->Status != Enumeration::DevicePairingResultStatus::Paired && pair_status->Status != Enumeration::DevicePairingResultStatus::AlreadyPaired) {
-			// todo: more specific error message
-			throw ref new FailureException(ref new String(L"Unable to pair"));
-		}
-	}
+
 	devices->Insert(device->DeviceId, device);
-	device->ConnectionStatusChanged += ref new Windows::Foundation::TypedEventHandler<Bluetooth::BluetoothLEDevice ^, Platform::Object ^>(
+	device->ConnectionStatusChanged += ref new Windows::Foundation::TypedEventHandler<Bluetooth::BluetoothLEDevice^, Platform::Object^>(
 		[](Windows::Devices::Bluetooth::BluetoothLEDevice^ device, Platform::Object^ eventArgs) {
-		if (device->ConnectionStatus == Bluetooth::BluetoothConnectionStatus::Disconnected) {
-			JsonObject^ msg = ref new JsonObject();
-			msg->Insert("_type", JsonValue::CreateStringValue("disconnectEvent"));
-			msg->Insert("device", JsonValue::CreateStringValue(device->DeviceId));
-			writeObject(msg);
-			devices->Remove(device->DeviceId);
-		}
-	});
+			if (device->ConnectionStatus == Bluetooth::BluetoothConnectionStatus::Disconnected) {
+				JsonObject^ msg = ref new JsonObject();
+				msg->Insert("_type", JsonValue::CreateStringValue("disconnectEvent"));
+				msg->Insert("device", JsonValue::CreateStringValue(device->DeviceId));
+				writeObject(msg);
+				devices->Remove(device->DeviceId);
+			}
+		});
 	// Force a connection upon device selection
 	// https://learn.microsoft.com/en-us/uwp/api/windows.devices.bluetooth.bluetoothledevice.frombluetoothaddressasync?view=winrt-19041#windows-devices-bluetooth-bluetoothledevice-frombluetoothaddressasync(system-uint64)
 	auto services = co_await device->GetGattServicesAsync(Bluetooth::BluetoothCacheMode::Uncached);
@@ -121,8 +119,8 @@ concurrency::task<IJsonValue^> connectRequest(JsonObject ^command) {
 	return JsonValue::CreateStringValue(device->DeviceId);
 }
 
-Concurrency::task<IJsonValue^> disconnectRequest(JsonObject ^command) {
-	String ^deviceId = command->GetNamedString("device", "");
+Concurrency::task<IJsonValue^> disconnectRequest(JsonObject^ command) {
+	String^ deviceId = command->GetNamedString("device", "");
 	if (!devices->HasKey(deviceId)) {
 		throw ref new FailureException(ref new String(L"Device not found"));
 	}
@@ -163,8 +161,8 @@ Concurrency::task<IJsonValue^> disconnectRequest(JsonObject ^command) {
 	return Concurrency::task_from_result<IJsonValue^>(JsonValue::CreateNullValue());
 }
 
-concurrency::task<Bluetooth::GenericAttributeProfile::GattDeviceServicesResult^> findServices(JsonObject ^command) {
-	String ^deviceId = command->GetNamedString("device", "");
+concurrency::task<Bluetooth::GenericAttributeProfile::GattDeviceServicesResult^> findServices(JsonObject^ command) {
+	String^ deviceId = command->GetNamedString("device", "");
 	if (!devices->HasKey(deviceId)) {
 		throw ref new FailureException(ref new String(L"Device not found"));
 	}
@@ -186,11 +184,11 @@ String^ characteristicKey(String^ device, String^ service, String^ characteristi
 	return ref new String(result.c_str());
 }
 
-String^ characteristicKey(JsonObject ^command) {
+String^ characteristicKey(JsonObject^ command) {
 	return characteristicKey(command->GetNamedString("device"), command->GetNamedString("service"), command->GetNamedString("characteristic"));
 }
 
-concurrency::task<Bluetooth::GenericAttributeProfile::GattCharacteristicsResult^> findCharacteristics(JsonObject ^command) {
+concurrency::task<Bluetooth::GenericAttributeProfile::GattCharacteristicsResult^> findCharacteristics(JsonObject^ command) {
 	if (!command->HasKey("service")) {
 		throw ref new InvalidArgumentException(ref new String(L"Service uuid must be provided"));
 	}
@@ -209,7 +207,7 @@ concurrency::task<Bluetooth::GenericAttributeProfile::GattCharacteristicsResult^
 	return results;
 }
 
-concurrency::task<Bluetooth::GenericAttributeProfile::GattCharacteristic^> getCharacteristic(JsonObject ^command) {
+concurrency::task<Bluetooth::GenericAttributeProfile::GattCharacteristic^> getCharacteristic(JsonObject^ command) {
 	if (!command->HasKey("characteristic")) {
 		throw ref new InvalidArgumentException(ref new String(L"Characteristic uuid must be provided"));
 	}
@@ -226,7 +224,7 @@ concurrency::task<Bluetooth::GenericAttributeProfile::GattCharacteristic^> getCh
 	throw ref new FailureException(ref new String(L"Requested characteristic not found"));
 }
 
-concurrency::task<IJsonValue^> servicesRequest(JsonObject ^command) {
+concurrency::task<IJsonValue^> servicesRequest(JsonObject^ command) {
 	auto servicesResult = co_await findServices(command);
 	auto result = ref new JsonArray();
 	for (unsigned int i = 0; i < servicesResult->Services->Size; i++) {
@@ -235,7 +233,7 @@ concurrency::task<IJsonValue^> servicesRequest(JsonObject ^command) {
 	return result;
 }
 
-concurrency::task<IJsonValue^> charactersticsRequest(JsonObject ^command) {
+concurrency::task<IJsonValue^> charactersticsRequest(JsonObject^ command) {
 	auto characteristicsResult = co_await findCharacteristics(command);
 	auto result = ref new JsonArray();
 	for (unsigned int i = 0; i < characteristicsResult->Characteristics->Size; i++) {
@@ -259,10 +257,135 @@ concurrency::task<IJsonValue^> charactersticsRequest(JsonObject ^command) {
 	return result;
 }
 
-concurrency::task<IJsonValue^> readRequest(JsonObject ^command) {
+concurrency::task<IJsonValue^> acceptPairingRequest(JsonObject^ command) {
+	pairingRequestWaiting->Insert(command->GetNamedNumber("origId"), "accept");
+
+	JsonObject^ response = ref new JsonObject();
+	response->Insert("_type", JsonValue::CreateStringValue("noop"));
+	co_return response;
+}
+
+concurrency::task<IJsonValue^> acceptPairingRequestPin(JsonObject^ command) {
+	pairingRequestWaiting->Insert(command->GetNamedNumber("origId"), "accept");
+	pairingRequestPasswordPIN->Insert(command->GetNamedNumber("origId"), command->GetNamedString("pin"));
+
+	JsonObject^ response = ref new JsonObject();
+	response->Insert("_type", JsonValue::CreateStringValue("noop"));
+	co_return response;
+}
+
+concurrency::task<IJsonValue^> acceptPairingRequestPasswordCredential(JsonObject^ command) {
+	pairingRequestWaiting->Insert(command->GetNamedNumber("origId"), "accept");
+	pairingRequestUsername->Insert(command->GetNamedNumber("origId"), command->GetNamedString("username"));
+	pairingRequestPasswordPIN->Insert(command->GetNamedNumber("origId"), command->GetNamedString("password"));
+
+	JsonObject^ response = ref new JsonObject();
+	response->Insert("_type", JsonValue::CreateStringValue("noop"));
+	co_return response;
+}
+
+concurrency::task<IJsonValue^> cancelPairingRequest(JsonObject^ command) {
+	pairingRequestWaiting->Insert(command->GetNamedNumber("origId"), "cancel");
+
+	JsonObject^ response = ref new JsonObject();
+	response->Insert("_type", JsonValue::CreateStringValue("noop"));
+	co_return response;
+}
+
+concurrency::task<IJsonValue^> pairRequest(JsonObject^ command) {
+	Bluetooth::BluetoothLEDevice^ device = devices->Lookup(command->GetNamedString("device"));
+	// Pair the device if needed
+	if (device->DeviceInformation->Pairing->CanPair && !(device->DeviceInformation->Pairing->IsPaired)) {
+		Enumeration::DevicePairingKinds supportedCeremonies = supportedCeremonies | Enumeration::DevicePairingKinds::ConfirmOnly;
+		supportedCeremonies = supportedCeremonies | Enumeration::DevicePairingKinds::DisplayPin;
+		supportedCeremonies = supportedCeremonies | Enumeration::DevicePairingKinds::ProvidePin;
+		supportedCeremonies = supportedCeremonies | Enumeration::DevicePairingKinds::ConfirmOnly;
+		supportedCeremonies = supportedCeremonies | Enumeration::DevicePairingKinds::ProvidePasswordCredential;
+		auto commandId = command->GetNamedNumber("_id");
+		device->DeviceInformation->Pairing->Custom->PairingRequested +=
+			ref new Windows::Foundation::TypedEventHandler<Windows::Devices::Enumeration::DeviceInformationCustomPairing^,
+			Windows::Devices::Enumeration::DevicePairingRequestedEventArgs^>(
+				[commandId](Enumeration::DeviceInformationCustomPairing^ customPairing, Enumeration::DevicePairingRequestedEventArgs^ pairRequestArgs) {
+					auto deferral = pairRequestArgs->GetDeferral();
+					JsonObject^ msg = ref new JsonObject();
+					msg->Insert("pairingType", JsonValue::CreateBooleanValue(true));
+					msg->Insert("_id", JsonValue::CreateNumberValue(commandId));
+					if (pairRequestArgs->PairingKind == Enumeration::DevicePairingKinds::None) {
+						throw ref new FailureException("The device cannot be paired");
+					}
+					else if (pairRequestArgs->PairingKind == Enumeration::DevicePairingKinds::ConfirmOnly) {
+						// also tack on a copy of the command in background.js to enable reissuing
+						msg->Insert("_type", JsonValue::CreateStringValue("pairing_confirmOnly"));
+					}
+					else if (pairRequestArgs->PairingKind == Enumeration::DevicePairingKinds::ConfirmPinMatch) {
+						msg->Insert("_type", JsonValue::CreateStringValue("pairing_confirmPinMatch"));
+						msg->Insert("pin", JsonValue::CreateStringValue(pairRequestArgs->Pin));
+					}
+					else if (pairRequestArgs->PairingKind == Enumeration::DevicePairingKinds::DisplayPin) {
+						msg->Insert("_type", JsonValue::CreateStringValue("pairing_displayPin"));
+						msg->Insert("pin", JsonValue::CreateStringValue(pairRequestArgs->Pin));
+					}
+					else if (pairRequestArgs->PairingKind == Enumeration::DevicePairingKinds::ProvidePin) {
+						msg->Insert("_type", JsonValue::CreateStringValue("pairing_providePin"));
+					}
+					else if (pairRequestArgs->PairingKind == Enumeration::DevicePairingKinds::ProvidePasswordCredential) {
+						msg->Insert("_type", JsonValue::CreateStringValue("pairing_providePasswordCredential"));
+					}
+					pairingRequestWaiting->Insert(commandId, "waiting");
+					writeObject(msg);
+					// wait until accepted/cancelled
+					while (pairingRequestWaiting->Lookup(commandId)->Equals("waiting")) {
+						// wait
+						Sleep(500);
+					}
+					boolean cancel = false;
+					if (pairingRequestWaiting->Lookup(commandId)->Equals("cancel")) {
+						// do nothing because there is no reject method
+					}
+					else if (pairRequestArgs->PairingKind == Enumeration::DevicePairingKinds::ConfirmOnly ||
+						pairRequestArgs->PairingKind == Enumeration::DevicePairingKinds::ConfirmPinMatch ||
+						pairRequestArgs->PairingKind == Enumeration::DevicePairingKinds::DisplayPin) {
+						pairRequestArgs->Accept();
+					}
+					else if (pairRequestArgs->PairingKind == Enumeration::DevicePairingKinds::ProvidePin) {
+						pairRequestArgs->Accept(pairingRequestPasswordPIN->Lookup(commandId));
+						pairingRequestPasswordPIN->Remove(commandId);
+					}
+					else if (pairRequestArgs->PairingKind == Enumeration::DevicePairingKinds::ProvidePasswordCredential) {
+						auto credential = ref new PasswordCredential();
+						credential->UserName = pairingRequestUsername->Lookup(commandId);
+						credential->Password = pairingRequestPasswordPIN->Lookup(commandId);
+						pairRequestArgs->AcceptWithPasswordCredential(credential);
+						pairingRequestUsername->Remove(commandId);
+						pairingRequestPasswordPIN->Remove(commandId);
+					}
+					pairingRequestWaiting->Remove(commandId);
+
+					deferral->Complete();
+				});
+		auto pair_status = co_await device->DeviceInformation->Pairing->Custom->PairAsync(supportedCeremonies);
+		// RejectedByHandler is raised in cases of cancellation
+		if (pair_status->Status != Enumeration::DevicePairingResultStatus::Paired
+			&& pair_status->Status != Enumeration::DevicePairingResultStatus::AlreadyPaired
+			&& pair_status->Status != Enumeration::DevicePairingResultStatus::RejectedByHandler) {
+			throw ref new FailureException(pair_status->Status.ToString());
+		}
+	}
+
+	JsonObject^ response = ref new JsonObject();
+	response->Insert("_type", JsonValue::CreateStringValue("noop"));
+
+	return response;
+}
+
+concurrency::task<IJsonValue^> readRequest(JsonObject^ command, int skipPair = 0) {
 	auto characteristic = co_await getCharacteristic(command);
 	auto result = co_await characteristic->ReadValueAsync();
-	if (result->Status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success) {
+	if (result->Status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success && skipPair == 0) {
+		co_await pairRequest(command);
+		return co_await readRequest(command, 1);
+	}
+	else if (result->Status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success) {
 		throw ref new FailureException(result->Status.ToString());
 	}
 	auto reader = Windows::Storage::Streams::DataReader::FromBuffer(result->Value);
@@ -273,7 +396,7 @@ concurrency::task<IJsonValue^> readRequest(JsonObject ^command) {
 	return valueArray;
 }
 
-concurrency::task<IJsonValue^> writeRequest(JsonObject ^command) {
+concurrency::task<IJsonValue^> writeRequest(JsonObject^ command, int skipPair = 0) {
 	auto characteristic = co_await getCharacteristic(command);
 	auto writer = ref new Windows::Storage::Streams::DataWriter();
 	auto dataArray = command->GetNamedArray("value");
@@ -284,7 +407,11 @@ concurrency::task<IJsonValue^> writeRequest(JsonObject ^command) {
 	bool writeWithoutResponse = (unsigned int)characteristic->CharacteristicProperties & (unsigned int)Bluetooth::GenericAttributeProfile::GattCharacteristicProperties::WriteWithoutResponse;
 	auto writeType = writeWithoutResponse ? Bluetooth::GenericAttributeProfile::GattWriteOption::WriteWithoutResponse : Bluetooth::GenericAttributeProfile::GattWriteOption::WriteWithResponse;
 	auto status = co_await characteristic->WriteValueAsync(writer->DetachBuffer(), writeType);
-	if (status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success) {
+	if (status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success && skipPair == 0) {
+		co_await pairRequest(command);
+		return co_await writeRequest(command, 1);
+	}
+	else if (status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success) {
 		throw ref new FailureException(status.ToString());
 	}
 
@@ -293,22 +420,28 @@ concurrency::task<IJsonValue^> writeRequest(JsonObject ^command) {
 
 unsigned long nextSubscriptionId = 1;
 
-concurrency::task<IJsonValue^> subscribeRequest(JsonObject ^command) {
+concurrency::task<IJsonValue^> subscribeRequest(JsonObject^ command, int skipPair = 0) {
 	auto characteristic = co_await getCharacteristic(command);
 
 	auto props = (unsigned int)characteristic->CharacteristicProperties;
 
 	if (props & (unsigned int)Bluetooth::GenericAttributeProfile::GattCharacteristicProperties::Notify) {
 		auto status = co_await characteristic->WriteClientCharacteristicConfigurationDescriptorAsync(Bluetooth::GenericAttributeProfile::GattClientCharacteristicConfigurationDescriptorValue::Notify);
-		if (status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success)
-		{
+		if (status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success && skipPair == 0) {
+			co_await pairRequest(command);
+			return co_await subscribeRequest(command, 1);
+		}
+		else if (status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success) {
 			throw ref new FailureException(status.ToString());
 		}
 	}
 	else if (props & (unsigned int)Bluetooth::GenericAttributeProfile::GattCharacteristicProperties::Indicate) {
 		auto status = co_await characteristic->WriteClientCharacteristicConfigurationDescriptorAsync(Bluetooth::GenericAttributeProfile::GattClientCharacteristicConfigurationDescriptorValue::Indicate);
-		if (status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success)
-		{
+		if (status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success && skipPair == 0) {
+			co_await pairRequest(command);
+			return co_await subscribeRequest(command, 1);
+		}
+		else if (status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success) {
 			throw ref new FailureException(status.ToString());
 		}
 	}
@@ -324,19 +457,19 @@ concurrency::task<IJsonValue^> subscribeRequest(JsonObject ^command) {
 	auto subscriptionId = JsonValue::CreateNumberValue(nextSubscriptionId++);
 
 	Windows::Foundation::EventRegistrationToken cookie =
-		characteristic->ValueChanged += ref new Windows::Foundation::TypedEventHandler<Bluetooth::GenericAttributeProfile::GattCharacteristic^, Bluetooth::GenericAttributeProfile::GattValueChangedEventArgs ^>(
+		characteristic->ValueChanged += ref new Windows::Foundation::TypedEventHandler<Bluetooth::GenericAttributeProfile::GattCharacteristic^, Bluetooth::GenericAttributeProfile::GattValueChangedEventArgs^>(
 			[subscriptionId](Bluetooth::GenericAttributeProfile::GattCharacteristic^ characteristic, Bluetooth::GenericAttributeProfile::GattValueChangedEventArgs^ eventArgs) {
-		JsonObject^ msg = ref new JsonObject();
-		msg->Insert("_type", JsonValue::CreateStringValue("valueChangedNotification"));
-		msg->Insert("subscriptionId", subscriptionId);
-		auto reader = Windows::Storage::Streams::DataReader::FromBuffer(eventArgs->CharacteristicValue);
-		auto valueArray = ref new JsonArray();
-		for (unsigned int i = 0; i < eventArgs->CharacteristicValue->Length; i++) {
-			valueArray->Append(JsonValue::CreateNumberValue(reader->ReadByte()));
-		}
-		msg->Insert("value", valueArray);
-		writeObject(msg);
-	});
+				JsonObject^ msg = ref new JsonObject();
+				msg->Insert("_type", JsonValue::CreateStringValue("valueChangedNotification"));
+				msg->Insert("subscriptionId", subscriptionId);
+				auto reader = Windows::Storage::Streams::DataReader::FromBuffer(eventArgs->CharacteristicValue);
+				auto valueArray = ref new JsonArray();
+				for (unsigned int i = 0; i < eventArgs->CharacteristicValue->Length; i++) {
+					valueArray->Append(JsonValue::CreateNumberValue(reader->ReadByte()));
+				}
+				msg->Insert("value", valueArray);
+				writeObject(msg);
+			});
 
 	characteristicsListenerMap->Insert(key, cookie);
 	characteristicsSubscriptionMap->Insert(key, subscriptionId);
@@ -344,12 +477,15 @@ concurrency::task<IJsonValue^> subscribeRequest(JsonObject ^command) {
 	return subscriptionId;
 }
 
-concurrency::task<IJsonValue^> unsubscribeRequest(JsonObject ^command) {
+concurrency::task<IJsonValue^> unsubscribeRequest(JsonObject^ command, int skipPair = 0) {
 	auto characteristic = co_await getCharacteristic(command);
 
 	auto status = co_await characteristic->WriteClientCharacteristicConfigurationDescriptorAsync(Bluetooth::GenericAttributeProfile::GattClientCharacteristicConfigurationDescriptorValue::None);
-	if (status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success)
-	{
+	if (status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success && skipPair == 0) {
+		co_await pairRequest(command);
+		return co_await unsubscribeRequest(command, 1);
+	}
+	else if (status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success) {
 		throw ref new FailureException(status.ToString());
 	}
 
@@ -367,8 +503,8 @@ concurrency::task<IJsonValue^> unsubscribeRequest(JsonObject ^command) {
 	return subscriptionId;
 }
 
-concurrency::task<void> processCommand(JsonObject ^command) {
-	String ^cmd = command->GetNamedString("cmd", "");
+concurrency::task<void> processCommand(JsonObject^ command) {
+	String^ cmd = command->GetNamedString("cmd", "");
 	JsonObject^ response = ref new JsonObject();
 	IJsonValue^ result = nullptr;
 	response->Insert("_type", JsonValue::CreateStringValue("response"));
@@ -421,6 +557,22 @@ concurrency::task<void> processCommand(JsonObject ^command) {
 			result = co_await unsubscribeRequest(command);
 		}
 
+		if (cmd->Equals("accept")) {
+			result = co_await acceptPairingRequest(command);
+		}
+
+		if (cmd->Equals("acceptPasswordCredential")) {
+			result = co_await acceptPairingRequestPasswordCredential(command);
+		}
+
+		if (cmd->Equals("acceptPin")) {
+			result = co_await acceptPairingRequestPin(command);
+		}
+
+		if (cmd->Equals("cancel")) {
+			result = co_await cancelPairingRequest(command);
+		}
+
 		if (result != nullptr) {
 			response->Insert("result", result);
 		}
@@ -459,28 +611,28 @@ int main(Array<String^>^ args) {
 
 	bleAdvertisementWatcher = ref new Bluetooth::Advertisement::BluetoothLEAdvertisementWatcher();
 	bleAdvertisementWatcher->ScanningMode = Bluetooth::Advertisement::BluetoothLEScanningMode::Active;
-	bleAdvertisementWatcher->Received += ref new Windows::Foundation::TypedEventHandler<Bluetooth::Advertisement::BluetoothLEAdvertisementWatcher ^, Windows::Devices::Bluetooth::Advertisement::BluetoothLEAdvertisementReceivedEventArgs ^>(
-		[](Bluetooth::Advertisement::BluetoothLEAdvertisementWatcher ^watcher, Bluetooth::Advertisement::BluetoothLEAdvertisementReceivedEventArgs^ eventArgs) {
-		unsigned int index = -1;
+	bleAdvertisementWatcher->Received += ref new Windows::Foundation::TypedEventHandler<Bluetooth::Advertisement::BluetoothLEAdvertisementWatcher^, Windows::Devices::Bluetooth::Advertisement::BluetoothLEAdvertisementReceivedEventArgs^>(
+		[](Bluetooth::Advertisement::BluetoothLEAdvertisementWatcher^ watcher, Bluetooth::Advertisement::BluetoothLEAdvertisementReceivedEventArgs^ eventArgs) {
+			unsigned int index = -1;
 
-		JsonObject^ msg = ref new JsonObject();
-		msg->Insert("_type", JsonValue::CreateStringValue("scanResult"));
-		msg->Insert("bluetoothAddress", JsonValue::CreateStringValue(ref new String(formatBluetoothAddress(eventArgs->BluetoothAddress).c_str())));
-		msg->Insert("rssi", JsonValue::CreateNumberValue(eventArgs->RawSignalStrengthInDBm));
-		// TODO fix timestamp calculation
-		msg->Insert("timestamp", JsonValue::CreateNumberValue((double)eventArgs->Timestamp.UniversalTime / 10000.0 + 11644480800000));
-		msg->Insert("advType", JsonValue::CreateStringValue(eventArgs->AdvertisementType.ToString()));
-		msg->Insert("localName", JsonValue::CreateStringValue(eventArgs->Advertisement->LocalName));
+			JsonObject^ msg = ref new JsonObject();
+			msg->Insert("_type", JsonValue::CreateStringValue("scanResult"));
+			msg->Insert("bluetoothAddress", JsonValue::CreateStringValue(ref new String(formatBluetoothAddress(eventArgs->BluetoothAddress).c_str())));
+			msg->Insert("rssi", JsonValue::CreateNumberValue(eventArgs->RawSignalStrengthInDBm));
+			// TODO fix timestamp calculation
+			msg->Insert("timestamp", JsonValue::CreateNumberValue((double)eventArgs->Timestamp.UniversalTime / 10000.0 + 11644480800000));
+			msg->Insert("advType", JsonValue::CreateStringValue(eventArgs->AdvertisementType.ToString()));
+			msg->Insert("localName", JsonValue::CreateStringValue(eventArgs->Advertisement->LocalName));
 
-		JsonArray^ serviceUuids = ref new JsonArray();
-		for (unsigned int i = 0; i < eventArgs->Advertisement->ServiceUuids->Size; i++) {
-			serviceUuids->Append(JsonValue::CreateStringValue(eventArgs->Advertisement->ServiceUuids->GetAt(i).ToString()));
-		}
-		msg->Insert("serviceUuids", serviceUuids);
+			JsonArray^ serviceUuids = ref new JsonArray();
+			for (unsigned int i = 0; i < eventArgs->Advertisement->ServiceUuids->Size; i++) {
+				serviceUuids->Append(JsonValue::CreateStringValue(eventArgs->Advertisement->ServiceUuids->GetAt(i).ToString()));
+			}
+			msg->Insert("serviceUuids", serviceUuids);
 
-		// TODO manfuacturer data / flags / data sections ?
-		writeObject(msg);
-	});
+			// TODO manfuacturer data / flags / data sections ?
+			writeObject(msg);
+		});
 
 	JsonObject^ msg = ref new JsonObject();
 	msg->Insert("_type", JsonValue::CreateStringValue("Start"));
@@ -495,10 +647,10 @@ int main(Array<String^>^ args) {
 	try {
 		while (!std::cin.eof()) {
 			unsigned int len = 0;
-			std::cin.read(reinterpret_cast<char *>(&len), 4);
+			std::cin.read(reinterpret_cast<char*>(&len), 4);
 
 			if (len > 0) {
-				char *msgBuf = new char[len];
+				char* msgBuf = new char[len];
 				std::cin.read(msgBuf, len);
 				String^ jsonStr = ref new String(convert.from_bytes(msgBuf, msgBuf + len).c_str());
 				delete[] msgBuf;
@@ -507,7 +659,7 @@ int main(Array<String^>^ args) {
 			}
 		}
 	}
-	catch (std::exception &e) {
+	catch (std::exception& e) {
 		JsonObject^ msg = ref new JsonObject();
 		msg->Insert("_type", JsonValue::CreateStringValue("error"));
 		std::string eReason = std::string(e.what());

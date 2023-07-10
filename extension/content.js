@@ -22,6 +22,60 @@ port.onMessage.addListener(message => {
         return;
     }
 
+    // actually displaying this confirmation is optional
+    // the application is allowed to accept on behalf of the user
+    // https://learn.microsoft.com/en-us/uwp/api/windows.devices.enumeration.devicepairingkinds?view=winrt-22621
+    if (message._type === 'pairing_confirmOnly') {
+        if (confirm('Bluetooth Pairing\n\nPress OK to confirm you would like to pair with your device.')) {
+            port.postMessage({ command: 'accept', args: [message._id] });
+        } else {
+            port.postMessage({ command: 'cancel', args: [message._id] });
+        }
+        return;
+    }
+
+    if (message._type === 'pairing_displayPin') {
+        if (confirm('Bluetooth Pairing\n\nUse the following PIN to pair your device: '+message.pin)) {
+            port.postMessage({ command: 'accept', args: [message._id] });
+        } else {
+            port.postMessage({ command: 'cancel', args: [message._id] });
+        }
+        return;
+    }
+
+    if (message._type === 'pairing_confirmPinMatch') {
+        if (confirm('Bluetooth Pairing\n\nConfirm the following PIN is displayed on your device: '+message.pin)) {
+            port.postMessage({ command: 'accept', args: [message._id] });
+        } else {
+            port.postMessage({ command: 'cancel', args: [message._id] });
+        }
+        return;
+    }
+
+    // not sure if this is relevant to Bluetooth but it is included in the list of possible ceremonies
+    // https://learn.microsoft.com/en-us/uwp/api/windows.devices.enumeration.devicepairingkinds?view=winrt-22621
+    if (message._type === 'pairing_providePasswordCredential') {
+        let username = prompt('Bluetooth Pairing\n\nEnter the username required to connect to your device:');
+        if (username === null) {
+            port.postMessage({ command: 'cancel', args: [message._id] });
+        }
+        let password = prompt('Bluetooth Pairing\n\nEnter the password required to connect to your device:');
+        if (password === null) {
+            port.postMessage({ command: 'cancel', args: [message._id] });
+        }
+        port.postMessage({ command: 'acceptPasswordCredential', args: [message._id, username, password] });
+        return;
+    }
+
+    if (message._type === 'pairing_providePin') {
+        let pin = prompt('Bluetooth Pairing\n\nEnter the PIN required to connect to your device:');
+        if (pin === null) {
+            port.postMessage({ command: 'cancel', args: [message._id] });
+        }
+        port.postMessage({ command: 'acceptPin', args: [message._id, pin] });
+        return;
+    }
+
     window.postMessage(Object.assign({}, message, {
         type: 'WebBluetoothPolyCSToPage',
     }), message.origin || '*');
