@@ -292,7 +292,7 @@ async function writeValueWithResponse(port, gattId, service, characteristic, val
         throw new Error('Invalid argument: value');
     }
 
-    return await nativeRequest('write', {
+    return await nativeRequest('writeWithResponse', {
         device: gattId,
         service: windowsServiceUuid(service),
         characteristic: windowsCharacteristicUuid(characteristic),
@@ -305,7 +305,7 @@ async function writeValueWithoutResponse(port, gattId, service, characteristic, 
         throw new Error('Invalid argument: value');
     }
 
-    return await nativeRequest('write', {
+    return await nativeRequest('writeWithoutResponse', {
         device: gattId,
         service: windowsServiceUuid(service),
         characteristic: windowsCharacteristicUuid(characteristic),

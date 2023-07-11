@@ -396,7 +396,7 @@ concurrency::task<IJsonValue^> readRequest(JsonObject^ command, int skipPair = 0
 	return valueArray;
 }
 
-concurrency::task<IJsonValue^> writeRequest(JsonObject^ command, int skipPair = 0) {
+concurrency::task<IJsonValue^> writeRequest(JsonObject^ command, int reqWriteType = 0, int skipPair = 0) {
 	auto characteristic = co_await getCharacteristic(command);
 	auto writer = ref new Windows::Storage::Streams::DataWriter();
 	auto dataArray = command->GetNamedArray("value");
@@ -407,9 +407,18 @@ concurrency::task<IJsonValue^> writeRequest(JsonObject^ command, int skipPair = 
 	bool writeWithoutResponse = (unsigned int)characteristic->CharacteristicProperties & (unsigned int)Bluetooth::GenericAttributeProfile::GattCharacteristicProperties::WriteWithoutResponse;
 	auto writeType = writeWithoutResponse ? Bluetooth::GenericAttributeProfile::GattWriteOption::WriteWithoutResponse : Bluetooth::GenericAttributeProfile::GattWriteOption::WriteWithResponse;
 	auto status = co_await characteristic->WriteValueAsync(writer->DetachBuffer(), writeType);
+
+	// override if specified in request
+	if (reqWriteType == 1) {
+		writeType = Bluetooth::GenericAttributeProfile::GattWriteOption::WriteWithResponse;
+	}
+	else if (reqWriteType == 2) {
+		writeType = Bluetooth::GenericAttributeProfile::GattWriteOption::WriteWithoutResponse;
+	}
+
 	if (status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success && skipPair == 0) {
 		co_await pairRequest(command);
-		return co_await writeRequest(command, 1);
+		return co_await writeRequest(command, reqWriteType, 1);
 	}
 	else if (status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success) {
 		throw ref new FailureException(status.ToString());
@@ -547,6 +556,14 @@ concurrency::task<void> processCommand(JsonObject^ command) {
 
 		if (cmd->Equals("write")) {
 			result = co_await writeRequest(command);
+		}
+
+		if (cmd->Equals("writeWithResponse")) {
+			result = co_await writeRequest(command, 1);
+		}
+
+		if (cmd->Equals("writeWithoutResponse")) {
+			result = co_await writeRequest(command, 2);
 		}
 
 		if (cmd->Equals("subscribe")) {

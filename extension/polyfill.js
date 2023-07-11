@@ -136,17 +136,20 @@ if (!navigator.bluetooth) {
 
             async writeValue(value) {
                 const byteValues = Array.from(new Uint8Array(value.buffer || value));
-                await callExtension('writeValue', [this._connection, this.service.uuid, this.uuid, byteValues]);
+                await callExtension('writeValue',
+                    [this._connection, this.service.uuid, this.uuid, byteValues]);
             }
 
             async writeValueWithResponse(value) {
                 const byteValues = Array.from(new Uint8Array(value.buffer || value));
-                await callExtension('writeValue', [this._connection, this.service.uuid, this.uuid, byteValues]);
+                await callExtension('writeValueWithResponse',
+                    [this._connection, this.service.uuid, this.uuid, byteValues]);
             }
 
             async writeValueWithoutResponse(value) {
                 const byteValues = Array.from(new Uint8Array(value.buffer || value));
-                await callExtension('writeValue', [this._connection, this.service.uuid, this.uuid, byteValues]);
+                await callExtension('writeValueWithoutResponse',
+                    [this._connection, this.service.uuid, this.uuid, byteValues]);
             }
 
             async startNotifications() {
