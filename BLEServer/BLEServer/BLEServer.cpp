@@ -609,6 +609,8 @@ concurrency::task<void> processCommand(JsonObject^ command) {
 }
 
 int main(Array<String^>^ args) {
+	CreateMutex(NULL, FALSE, L"BLEServer");
+
 	Microsoft::WRL::Wrappers::RoInitializeWrapper initialize(RO_INIT_MULTITHREADED);
 
 	CoInitializeSecurity(

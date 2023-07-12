@@ -1,0 +1,9 @@
+{
+  "name": "web_bluetooth.server",
+  "description": "Web Bluetooth Polyfill Server",
+  "path": "BLEServer.exe",
+  "type": "stdio",
+  "allowed_extensions": [
+    "web-bluetooth-polyfill@ff"
+  ]
+}
