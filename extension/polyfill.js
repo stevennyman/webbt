@@ -282,6 +282,10 @@ if (!navigator.bluetooth) {
                 let result = await callExtension('requestDevice', args);
                 return new BluetoothDevice(result.address, result.name);
             },
+            getAvailability: async function () {
+                let result = await callExtension('availability', []);
+                return result;
+            },
         };
     })();
 }

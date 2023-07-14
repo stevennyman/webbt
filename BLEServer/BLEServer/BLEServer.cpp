@@ -29,6 +29,7 @@
 using namespace Platform;
 using namespace Windows::Devices;
 using namespace Windows::Data::Json;
+using namespace Windows::Devices::Bluetooth;
 using namespace Windows::Security::Credentials;
 
 Bluetooth::Advertisement::BluetoothLEAdvertisementWatcher^ bleAdvertisementWatcher;
@@ -512,6 +513,14 @@ concurrency::task<IJsonValue^> unsubscribeRequest(JsonObject^ command, int skipP
 	return subscriptionId;
 }
 
+concurrency::task<IJsonValue^> checkAvailability(JsonObject^ command) {
+	auto adapter = co_await BluetoothAdapter::GetDefaultAsync();
+	if (adapter != nullptr) {
+		co_return JsonValue::CreateBooleanValue(true);
+	}
+	co_return JsonValue::CreateBooleanValue(false);
+}
+
 concurrency::task<void> processCommand(JsonObject^ command) {
 	String^ cmd = command->GetNamedString("cmd", "");
 	JsonObject^ response = ref new JsonObject();
@@ -588,6 +597,10 @@ concurrency::task<void> processCommand(JsonObject^ command) {
 
 		if (cmd->Equals("cancel")) {
 			result = co_await cancelPairingRequest(command);
+		}
+
+		if (cmd->Equals("availability")) {
+			result = co_await checkAvailability(command);
 		}
 
 		if (result != nullptr) {

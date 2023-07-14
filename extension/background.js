@@ -353,6 +353,10 @@ async function cancel(port, _id) {
     return await nativeRequest('cancel', { origId: _id });
 }
 
+async function availability() {
+    return await nativeRequest('availability');
+}
+
 const exportedMethods = {
     requestDevice,
     gattConnect,
@@ -371,6 +375,7 @@ const exportedMethods = {
     acceptPasswordCredential,
     acceptPin,
     cancel,
+    availability,
 };
 
 chrome.runtime.onConnect.addListener((port) => {
