@@ -287,5 +287,42 @@ if (!navigator.bluetooth) {
                 return result;
             },
         };
+
+        function handleUnnamedUUID(alias, result) {
+            if (result) {
+                return BluetoothUUID.canonicalUUID(result);
+            }
+            try {
+                return BluetoothUUID.canonicalUUID(alias);
+            /* eslint-disable-next-line no-empty*/
+            } catch (error) {}
+            if (alias.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)) {
+                return alias;
+            }
+            throw new TypeError('Not a valid name, short UUID, or full UUID');
+        }
+
+        BluetoothUUID = {
+            canonicalUUID: function (alias) {
+                let aliasint = Number(alias);
+                if (isNaN(aliasint)) {
+                    throw new TypeError('Not a valid number');
+                }
+                if (aliasint > 0xFFFFFFFF) {
+                    throw new TypeError('Value is too large');
+                }
+                let result = aliasint.toString(16).padStart('8', '0') + '-0000-1000-8000-00805f9b34fb';
+                return result;
+            },
+            getService: function (alias) {
+                return handleUnnamedUUID(alias, STANDARD_GATT_SERVICES[alias] || null);
+            },
+            getCharacteristic: function (alias) {
+                return handleUnnamedUUID(alias, STANDARD_GATT_CHARACTERISTICS[alias] || null);
+            },
+            getDescriptor: function (alias) {
+                return handleUnnamedUUID(alias, STANDARD_GATT_DESCRIPTORS[alias] || null);
+            },
+        };
     })();
 }

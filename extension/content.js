@@ -250,7 +250,10 @@ class DeviceChooserUI {
 }
 
 // Inject the Polyfill
+const filenames = ['gatt-services', 'gatt-characteristics', 'gatt-descriptors', 'polyfill'];
 
-var script = document.createElement('script');
-script.src = chrome.extension.getURL('polyfill.js');
-document.documentElement.appendChild(script);
+for (const filename of filenames) {
+    var script = document.createElement('script');
+    script.src = chrome.extension.getURL(filename+'.js');
+    document.documentElement.appendChild(script);
+}

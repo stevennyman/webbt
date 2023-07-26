@@ -16,6 +16,9 @@
         ]
     },
     "web_accessible_resources": [
+        "gatt-services.js",
+        "gatt-characteristics.js",
+        "gatt-descriptors.js",
         "polyfill.js"
     ],
     "content_scripts": [

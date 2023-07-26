@@ -1,0 +1,3 @@
+[submodule "Bluetooth_SIG_UUIDs"]
+	path = Bluetooth_SIG_UUIDs
+	url = https://bitbucket.org/bluetooth-SIG/public.git

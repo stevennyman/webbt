@@ -9,6 +9,8 @@ module.exports = {
         "prompt": false,
         "STANDARD_GATT_SERVICES": true,
         "STANDARD_GATT_CHARACTERISTICS": true,
+        "STANDARD_GATT_DESCRIPTORS": true,
+        "BluetoothUUID": true,
     },
     "rules": {
         "indent": ["error", 4],
