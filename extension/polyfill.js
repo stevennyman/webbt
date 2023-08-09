@@ -116,12 +116,20 @@ if (!navigator.bluetooth) {
                 return this.service.device.gatt._connection;
             }
 
-            async getDescriptor(/* descriptor */) {
-                throw new Error('Not implemented');
+            async getDescriptor(bluetoothDescriptorUUID) {
+                const result = await callExtension('getDescriptor',
+                    [this._connection, this.service.uuid, this.uuid, bluetoothDescriptorUUID]);
+                return new BluetoothRemoteGATTDescriptor(this, result.uuid, result.value);
             }
 
-            async getDescriptors(/* descriptor */) {
-                throw new Error('Not implemented');
+            async getDescriptors(bluetoothDescriptorUUID) {
+                const result = await callExtension('getDescriptors',
+                    [this._connection, this.service.uuid, this.uuid, bluetoothDescriptorUUID]);
+                let output = [];
+                for (const elem of result.list) {
+                    output.push(new BluetoothRemoteGATTDescriptor(this, elem.uuid, elem.value));
+                }
+                return output;
             }
 
             async readValue() {
@@ -274,6 +282,30 @@ if (!navigator.bluetooth) {
                 this.id = id;
                 this.name = name;
                 this.gatt = new BluetoothRemoteGATTServer(this);
+            }
+        }
+
+        class BluetoothRemoteGATTDescriptor {
+            constructor(characteristic, uuid, value) {
+                this.characteristic = characteristic;
+                this.uuid = uuid;
+                this.value = new DataView(new Uint8Array(value).buffer);
+            }
+
+            async readValue() {
+                let result = await callExtension('readDescriptorValue',
+                    [this.characteristic._connection, this.characteristic.service.uuid,
+                        this.characteristic.uuid, this.uuid]);
+                this.value = new DataView(new Uint8Array(result.value).buffer);
+                return this.value;
+            }
+
+            async writeValue(array) {
+                let result = await callExtension('writeDescriptorValue',
+                    [this.characteristic._connection, this.characteristic.service.uuid,
+                        this.characteristic.uuid, this.uuid, array]);
+                this.value = new DataView(new Uint8Array(result.value).buffer);
+                return;
             }
         }
 

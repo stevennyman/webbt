@@ -110,6 +110,14 @@ function windowsCharacteristicUuid(uuid) {
     return '{' + normalizeUuid(uuid, STANDARD_GATT_CHARACTERISTICS) + '}';
 }
 
+function windowsDescriptorUuid(uuid) {
+    if (uuid) {
+        return '{' + normalizeUuid(uuid, STANDARD_GATT_DESCRIPTORS) + '}';
+    } else {
+        return uuid;
+    }
+}
+
 let scanningCounter = 0;
 function startScanning(port) {
     if (!scanningCounter) {
@@ -357,6 +365,61 @@ async function availability() {
     return await nativeRequest('availability');
 }
 
+async function getDescriptor(port, gattId, service, characteristic, descriptor) {
+    let req = await nativeRequest('getDescriptor', {
+        device: gattId,
+        service: windowsServiceUuid(service),
+        characteristic: windowsCharacteristicUuid(characteristic),
+        descriptor: windowsDescriptorUuid(descriptor),
+    }, port);
+
+    req.uuid = normalizeUuid(req.uuid);
+
+    return req;
+}
+
+async function getDescriptors(port, gattId, service, characteristic, descriptor) {
+    let req = await nativeRequest('getDescriptors', {
+        device: gattId,
+        service: windowsServiceUuid(service),
+        characteristic: windowsCharacteristicUuid(characteristic),
+        descriptor: windowsDescriptorUuid(descriptor),
+    }, port);
+
+    for (const elem of req.list) {
+        elem.uuid = normalizeUuid(elem.uuid);
+    }
+
+    return req;
+}
+
+async function readDescriptorValue(port, gattId, service, characteristic, descriptor) {
+    let req = await nativeRequest('readDescriptorValue', {
+        device: gattId,
+        service: windowsServiceUuid(service),
+        characteristic: windowsCharacteristicUuid(characteristic),
+        descriptor: windowsDescriptorUuid(descriptor),
+    }, port);
+
+    req.uuid = normalizeUuid(req.uuid);
+
+    return req;
+}
+
+async function writeDescriptorValue(port, gattId, service, characteristic, descriptor, value) {
+    let req = await nativeRequest('writeDescriptorValue', {
+        device: gattId,
+        service: windowsServiceUuid(service),
+        characteristic: windowsCharacteristicUuid(characteristic),
+        descriptor: windowsDescriptorUuid(descriptor),
+        value: value,
+    }, port);
+
+    req.uuid = normalizeUuid(req.uuid);
+
+    return req;
+}
+
 const exportedMethods = {
     requestDevice,
     gattConnect,
@@ -376,6 +439,10 @@ const exportedMethods = {
     acceptPin,
     cancel,
     availability,
+    getDescriptor,
+    getDescriptors,
+    readDescriptorValue,
+    writeDescriptorValue,
 };
 
 chrome.runtime.onConnect.addListener((port) => {

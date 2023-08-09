@@ -521,6 +521,104 @@ concurrency::task<IJsonValue^> checkAvailability(JsonObject^ command) {
 	co_return JsonValue::CreateBooleanValue(false);
 }
 
+concurrency::task<IJsonValue^> getDescriptorUuidAndValueAsJson(GenericAttributeProfile::GattDescriptor^ descriptor, BluetoothCacheMode cacheMode = BluetoothCacheMode::Uncached) {
+	auto result = ref new JsonObject();
+
+	result->Insert("uuid", JsonValue::CreateStringValue(descriptor->Uuid.ToString()));
+
+	GenericAttributeProfile::GattReadResult^ descValue;
+
+	descValue = co_await descriptor->ReadValueAsync(cacheMode);
+
+	if (descValue->Status != GenericAttributeProfile::GattCommunicationStatus::Success) {
+		throw ref new FailureException("Unable to read descriptor value: " + descValue->Status.ToString());
+	}
+
+	auto reader = Windows::Storage::Streams::DataReader::FromBuffer(descValue->Value);
+	auto valueArray = ref new JsonArray();
+	for (unsigned int i = 0; i < descValue->Value->Length; i++) {
+		valueArray->Append(JsonValue::CreateNumberValue(reader->ReadByte()));
+	}
+
+	result->Insert("value", valueArray);
+
+	co_return result;
+}
+
+concurrency::task<GenericAttributeProfile::GattDescriptor^> retrieveFirstDescriptor(JsonObject^ command) {
+	auto characteristic = co_await getCharacteristic(command);
+	auto descriptorUuid = parseUuid(command->GetNamedString("descriptor"));
+	auto descriptors = co_await characteristic->GetDescriptorsForUuidAsync(descriptorUuid, BluetoothCacheMode::Uncached);
+	if (descriptors->Status != GenericAttributeProfile::GattCommunicationStatus::Success) {
+		throw ref new FailureException("Unable to retrieve descriptors");
+	}
+
+	auto firstDesc = descriptors->Descriptors->First()->Current;
+
+	co_return firstDesc;
+}
+
+concurrency::task<IJsonValue^> getDescriptor(JsonObject^ command, BluetoothCacheMode cacheMode = BluetoothCacheMode::Uncached) {
+	auto firstDesc = co_await retrieveFirstDescriptor(command);
+
+	auto result = co_await getDescriptorUuidAndValueAsJson(firstDesc, cacheMode);
+
+	co_return result;
+}
+
+concurrency::task<IJsonValue^> getDescriptors(JsonObject^ command) {
+	auto result = ref new JsonObject();
+	auto resultlist = ref new JsonArray();
+
+	auto characteristic = co_await getCharacteristic(command);
+
+	GenericAttributeProfile::GattDescriptorsResult^ descriptors;
+
+	if (command->HasKey("descriptor")) {
+		auto descriptorUuid = parseUuid(command->GetNamedString("descriptor"));
+		descriptors = co_await characteristic->GetDescriptorsForUuidAsync(descriptorUuid, BluetoothCacheMode::Uncached);
+	}
+	else {
+		descriptors = co_await characteristic->GetDescriptorsAsync(BluetoothCacheMode::Uncached);
+	}
+
+	if (descriptors->Status != GenericAttributeProfile::GattCommunicationStatus::Success) {
+		throw ref new FailureException("Unable to retrieve descriptors");
+	}
+
+	int descSize = descriptors->Descriptors->Size;
+
+	for (int i = 0; i < descSize; i++) {
+		auto desDesc = descriptors->Descriptors->GetAt(i);
+		auto resultInner = co_await getDescriptorUuidAndValueAsJson(desDesc, BluetoothCacheMode::Cached);
+		resultlist->Append(resultInner);
+	}
+
+
+	result->Insert("list", resultlist);
+	co_return result;
+}
+
+concurrency::task<IJsonValue^> writeDescriptorValue(JsonObject^ command) {
+	auto firstDesc = co_await retrieveFirstDescriptor(command);
+
+	auto writer = ref new Windows::Storage::Streams::DataWriter();
+	auto dataArray = command->GetNamedArray("value");
+	for (unsigned int i = 0; i < dataArray->Size; i++) {
+		writer->WriteByte((unsigned char)dataArray->GetNumberAt(i));
+	}
+
+	auto writeStatus = co_await firstDesc->WriteValueAsync(writer->DetachBuffer());
+
+	if (writeStatus != GenericAttributeProfile::GattCommunicationStatus::Success) {
+		throw ref new FailureException("Unable to write descriptor value: " + writeStatus.ToString());
+	}
+
+	auto result = co_await getDescriptorUuidAndValueAsJson(firstDesc, BluetoothCacheMode::Uncached);
+
+	co_return result;
+}
+
 concurrency::task<void> processCommand(JsonObject^ command) {
 	String^ cmd = command->GetNamedString("cmd", "");
 	JsonObject^ response = ref new JsonObject();
@@ -601,6 +699,22 @@ concurrency::task<void> processCommand(JsonObject^ command) {
 
 		if (cmd->Equals("availability")) {
 			result = co_await checkAvailability(command);
+		}
+
+		if (cmd->Equals("getDescriptor")) {
+			result = co_await getDescriptor(command, BluetoothCacheMode::Cached);
+		}
+
+		if (cmd->Equals("getDescriptors")) {
+			result = co_await getDescriptors(command);
+		}
+
+		if (cmd->Equals("readDescriptorValue")) {
+			result = co_await getDescriptor(command, BluetoothCacheMode::Uncached);
+		}
+
+		if (cmd->Equals("writeDescriptorValue")) {
+			result = co_await writeDescriptorValue(command);
 		}
 
 		if (result != nullptr) {

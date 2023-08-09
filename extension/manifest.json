@@ -12,6 +12,7 @@
         "scripts": [
             "gatt-services.js",
             "gatt-characteristics.js",
+            "gatt-descriptors.js",
             "background.js"
         ]
     },
