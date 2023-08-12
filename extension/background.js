@@ -208,7 +208,11 @@ async function requestDevice(port, options) {
             deviceRssi[msg.bluetoothAddress] = msg.rssi;
             if (options.acceptAllDevices ||
                 options.filters.some(filter => matchDeviceFilter(filter, msg))) {
-                port.postMessage(msg);
+                if ((options.exclusionFilters &&
+                    !options.exclusionFilters.some(filter => matchDeviceFilter(filter, msg)))
+                    || !options.exclusionFilters) {
+                    port.postMessage(msg);
+                }
             }
         }
     }
