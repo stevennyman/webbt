@@ -117,6 +117,11 @@ concurrency::task<IJsonValue^> connectRequest(JsonObject^ command) {
 		// https://learn.microsoft.com/en-us/uwp/api/windows.devices.bluetooth.genericattributeprofile.gattcommunicationstatus?view=winrt-19041
 		throw ref new FailureException(ref new String(L"Unable to connect"));
 	}
+	else {
+		for (int i = 0; i < services->Services->Size; i++) {
+			delete services->Services->GetAt(i);
+		}
+	}
 	return JsonValue::CreateStringValue(device->DeviceId);
 }
 
