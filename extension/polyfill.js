@@ -89,11 +89,16 @@ if (!navigator.bluetooth) {
             }
 
             dispatchEvent(event) {
+                event.target = this;
+                if (event.type === 'characteristicvaluechanged' && this.oncharacteristicvaluechanged) {
+                    this.oncharacteristicvaluechanged.call(this, event);
+                } else if (event.type === 'gattserverdisconnected' && this.ongattserverdisconnected ) {
+                    this.ongattserverdisconnected.call(this, event);
+                }
                 if (!(event.type in this[listeners])) {
                     return true;
                 }
                 var stack = [].concat(this[listeners][event.type]);
-                event.target = this;
                 for (var i = 0, l = stack.length; i < l; i++) {
                     stack[i].call(this, event);
                 }
