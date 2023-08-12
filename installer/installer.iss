@@ -34,8 +34,8 @@ MinVersion=10.0.15063
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Messages]
-SetupAppRunningError=Setup has detected that %1 is currently running in Firefox.%n%nPlease temporarily disable the Web Bluetooth extension in Firefox or close all instances of Firefox now. Then, click OK to continue, or Cancel to exit.
-UninstallAppRunningError=Uninstall has detected that %1 is currently running in Firefox.%n%nPlease uninstall the Web Bluetooth extension in Firefox then click OK to continue uninstalling %1, or Cancel to exit.
+SetupAppRunningError=Setup has detected that %1 is currently running in Firefox.%n%nPlease close any pages in Firefox that use Web Bluetooth. Then, click OK to continue, or Cancel to exit.
+UninstallAppRunningError=Uninstall has detected that %1 is currently running in Firefox.%n%Please close any pages in Firefox that use Web Bluetooth. Then, click OK to continue uninstalling %1, or Cancel to exit.
 
 [Registry]
 Root: HKA; Subkey: "SOFTWARE\Mozilla\NativeMessagingHosts\web_bluetooth.server"; Flags: uninsdeletekey

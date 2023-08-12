@@ -1,6 +1,5 @@
 /* eslint-disable no-console */
 
-const nativePort = chrome.runtime.connectNative('web_bluetooth.server');
 let debugPrints = false;
 
 let requestId = 0;
@@ -8,7 +7,7 @@ let requests = {};
 
 let commandPorts = {};
 
-async function nativeRequest(cmd, params, port = null) {
+async function nativeRequest(cmd, params, port) {
     return new Promise((resolve, reject) => {
         requests[requestId] = { resolve, reject };
         commandPorts[requestId] = port;
@@ -19,13 +18,13 @@ async function nativeRequest(cmd, params, port = null) {
         if (debugPrints) {
             console.log('Sent native message:', msg);
         }
-        nativePort.postMessage(msg);
+        portsObjects.get(port).nativeConnection.postMessage(msg);
     });
 }
 
 const subscriptions = {};
 const devices = {};
-nativePort.onMessage.addListener((msg) => {
+function nativePortOnMessage(msg) {
     if (debugPrints) {
         console.log('Received native message:', msg);
     }
@@ -60,14 +59,14 @@ nativePort.onMessage.addListener((msg) => {
             delete devices[gattId];
         }
     }
-});
+}
 
 let portsObjects = new WeakMap();
 const characteristicCache = {};
 
-nativePort.onDisconnect.addListener(() => {
+function nativePortOnDisconnect() {
     console.log('Disconnected!', chrome.runtime.lastError.message);
-});
+}
 
 function leftPad(s, count, pad) {
     while (s.length < count) {
@@ -121,7 +120,7 @@ function windowsDescriptorUuid(uuid) {
 let scanningCounter = 0;
 function startScanning(port) {
     if (!scanningCounter) {
-        nativeRequest('scan');
+        nativeRequest('scan', {}, port);
     }
     portsObjects.get(port).scanCount++;
     scanningCounter++;
@@ -131,7 +130,7 @@ function stopScanning(port) {
     scanningCounter--;
     portsObjects.get(port).scanCount--;
     if (!scanningCounter) {
-        nativeRequest('stopScan');
+        nativeRequest('stopScan', {}, port);
     }
 }
 
@@ -217,7 +216,7 @@ async function requestDevice(port, options) {
         }
     }
 
-    nativePort.onMessage.addListener(scanResultListener);
+    portsObjects.get(port).nativeConnection.onMessage.addListener(scanResultListener);
     port.postMessage({ _type: 'showDeviceChooser' });
     startScanning(port);
     try {
@@ -246,7 +245,7 @@ async function requestDevice(port, options) {
         };
     } finally {
         stopScanning(port);
-        nativePort.onMessage.removeListener(scanResultListener);
+        portsObjects.get(port).nativeConnection.onMessage.removeListener(scanResultListener);
     }
 }
 
@@ -389,23 +388,24 @@ async function stopNotifications(port, gattId, service, characteristic) {
 }
 
 async function accept(port, _id) {
-    return await nativeRequest('accept', { origId: _id });
+    return await nativeRequest('accept', { origId: _id }, port);
 }
 
 async function acceptPasswordCredential(port, _id, username, password) {
-    return await nativeRequest('acceptPasswordCredential', { origId: _id, username: username, password: password });
+    return await nativeRequest('acceptPasswordCredential',
+        { origId: _id, username: username, password: password }, port);
 }
 
 async function acceptPin(port, _id, pin) {
-    return await nativeRequest('acceptPin', { origId: _id, pin: pin });
+    return await nativeRequest('acceptPin', { origId: _id, pin: pin }, port);
 }
 
 async function cancel(port, _id) {
-    return await nativeRequest('cancel', { origId: _id });
+    return await nativeRequest('cancel', { origId: _id }, port);
 }
 
-async function availability() {
-    return await nativeRequest('availability');
+async function availability(port) {
+    return await nativeRequest('availability', {}, port);
 }
 
 async function getDescriptor(port, gattId, service, characteristic, descriptor) {
@@ -494,6 +494,14 @@ chrome.runtime.onConnect.addListener((port) => {
         devices: new Set(),
         subscriptions: new Set(),
         knownDeviceIds: new Set(),
+        nativeConnection: chrome.runtime.connectNative('web_bluetooth.server'),
+    });
+
+    portsObjects.get(port).nativeConnection.onMessage.addListener(nativePortOnMessage);
+    portsObjects.get(port).nativeConnection.onDisconnect.addListener(nativePortOnDisconnect);
+
+    nativeRequest('ping', {}, port).then(() => {
+        console.log('Connected to server');
     });
 
     port.onDisconnect.addListener(() => {
@@ -503,6 +511,9 @@ chrome.runtime.onConnect.addListener((port) => {
         while (portsObjects.get(port).scanCount > 0) {
             stopScanning(port);
         }
+
+        // close the dedicated host process
+        portsObjects.get(port).nativeConnection.disconnect();
     });
 
     port.onMessage.addListener((request) => {
@@ -525,8 +536,4 @@ chrome.runtime.onConnect.addListener((port) => {
             sendResponse({ error: 'Unknown command: ' + request.command });
         }
     });
-});
-
-nativeRequest('ping').then(() => {
-    console.log('Connected to server');
 });
