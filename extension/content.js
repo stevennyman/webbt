@@ -1,10 +1,18 @@
 /* global window, document */
 
 // Connect to background script
-let port = chrome.runtime.connect();
+var port = null;
 let chooserUI = null;
 
-port.onMessage.addListener(message => {
+function disconnectport() {
+    if (port) {
+        port.disconnect();
+        port = null;
+    }
+}
+window.addEventListener('pagehide', disconnectport);
+
+function portMsg(message) {
     if (message._type === 'showDeviceChooser') {
         if (!chooserUI) {
             chooserUI = new DeviceChooserUI();
@@ -79,11 +87,15 @@ port.onMessage.addListener(message => {
     window.postMessage(Object.assign({}, message, {
         type: 'WebBluetoothPolyCSToPage',
     }), message.origin || '*');
-});
+}
 
 // Listen for Web Bluetooth Requests
 window.addEventListener('message', event => {
     if (event.source === window && event.data && event.data.type === 'WebBluetoothPolyPageToCS') {
+        if (!port) {
+            port = chrome.runtime.connect();
+            port.onMessage.addListener(portMsg);
+        }
         port.postMessage(Object.assign({}, event.data, { origin: event.origin }));
     }
 }, false);
