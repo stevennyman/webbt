@@ -148,6 +148,45 @@ function matchDeviceFilter(filter, device) {
     if (filter.namePrefix && (!device.localName || device.localName.indexOf(filter.namePrefix) !== 0)) {
         return false;
     }
+
+    if (filter.manufacturerData) {
+        if (!filter.companyIdentifier) {
+            throw new Error('manufacturerData is missing required companyIdentifier');
+        }
+        let companyIdentifierFlag = false;
+        for (const elem of device.manufacturerData) {
+            for (const elemInner of filter.manufacturerData) {
+                if (elem.companyIdentifier == elemInner.companyIdentifier) {
+                    companyIdentifierFlag = true;
+                    if (elemInner.dataPrefix) {
+                        let desprefix = new Uint8Array(elemInner.dataPrefix);
+                        let data = new Uint8Array(elem.data);
+                        if (elemInner.mask) {
+                            const reqlength = desprefix.length;
+                            if (elemInner.mask.length != reqlength) {
+                                throw new Error('Mask length must equal prefix length');
+                            }
+                            for (let i = 0; i < reqlength; i++) {
+                                desprefix[i] = desprefix[i] & elemInner.mask[i];
+                                data[i] = data[i] & elemInner.mask[i];
+                            }
+                        }
+                        for (let i = 0; i < desprefix.length; i++) {
+                            if (i >= data.length) {
+                                return false;
+                            }
+                            if (desprefix[i] != data[i]) {
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (!companyIdentifierFlag) {
+            return false;
+        }
+    }
     return true;
 }
 

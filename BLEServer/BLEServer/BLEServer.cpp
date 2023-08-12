@@ -776,7 +776,29 @@ int main(Array<String^>^ args) {
 			}
 			msg->Insert("serviceUuids", serviceUuids);
 
-			// TODO manfuacturer data / flags / data sections ?
+			auto manufacturerData = eventArgs->Advertisement->ManufacturerData;
+
+			auto manufacturerDataJson = ref new JsonArray();
+
+			for (unsigned int i = 0; i < manufacturerData->Size; i++) {
+				auto desiredItem = manufacturerData->GetAt(i);
+				auto manufacturerItem = ref new JsonObject();
+
+				manufacturerItem->Insert("companyIdentifier", JsonValue::CreateNumberValue(desiredItem->CompanyId));
+
+				auto reader = Windows::Storage::Streams::DataReader::FromBuffer(desiredItem->Data);
+				auto valueArray = ref new JsonArray();
+				for (unsigned int i = 0; i < desiredItem->Data->Length; i++) {
+					valueArray->Append(JsonValue::CreateNumberValue(reader->ReadByte()));
+				}
+				manufacturerItem->Insert("data", valueArray);
+
+				manufacturerDataJson->Append(manufacturerItem);
+			}
+
+			msg->Insert("manufacturerData", manufacturerDataJson);
+
+			// TODO flags / data sections ?
 			writeObject(msg);
 		});
 

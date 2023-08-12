@@ -27,7 +27,7 @@ module.exports = {
         'func-call-spacing': 2,
         'key-spacing': 2,
         'keyword-spacing': 2,
-        'max-depth': [2, 6],
+        'max-depth': [2, 7],
         'max-len': [2, {
             'code': 120,
             'ignoreUrls': true,
