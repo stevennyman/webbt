@@ -90,6 +90,8 @@ void writeObject(JsonObject^ jsonObject) {
 	LeaveCriticalSection(&OutputCriticalSection);
 }
 
+concurrency::task<IJsonValue^> disconnectRequest(JsonObject^ command);
+
 concurrency::task<IJsonValue^> connectRequest(JsonObject^ command) {
 	String^ addressStr = command->GetNamedString("address", "");
 	unsigned long long address = std::stoull(addressStr->Data(), 0, 16);
@@ -106,7 +108,11 @@ concurrency::task<IJsonValue^> connectRequest(JsonObject^ command) {
 				msg->Insert("_type", JsonValue::CreateStringValue("disconnectEvent"));
 				msg->Insert("device", JsonValue::CreateStringValue(device->DeviceId));
 				writeObject(msg);
-				devices->Remove(device->DeviceId);
+				// clean up any subscriptions, etc.
+				auto disconnectArgs = ref new JsonObject();
+				disconnectArgs->Insert("device", JsonValue::CreateStringValue(device->DeviceId));
+				auto disconnectOp{ disconnectRequest(disconnectArgs) };
+				disconnectOp.wait();
 			}
 		});
 	// Force a connection upon device selection
@@ -125,7 +131,7 @@ concurrency::task<IJsonValue^> connectRequest(JsonObject^ command) {
 	return JsonValue::CreateStringValue(device->DeviceId);
 }
 
-Concurrency::task<IJsonValue^> disconnectRequest(JsonObject^ command) {
+concurrency::task<IJsonValue^> disconnectRequest(JsonObject^ command) {
 	String^ deviceId = command->GetNamedString("device", "");
 	if (!devices->HasKey(deviceId)) {
 		throw ref new FailureException(ref new String(L"Device not found"));
