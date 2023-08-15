@@ -44,9 +44,11 @@ function nativePortOnMessage(msg) {
         delete requests[msg._id];
     }
     if (msg._type === 'valueChangedNotification') {
-        const port = subscriptions[msg.subscriptionId];
-        if (port) {
-            port.postMessage(msg);
+        const portList = subscriptions[msg.subscriptionId];
+        if (portList) {
+            for (const port of portList) {
+                port.postMessage(msg);
+            }
         }
     }
     if (msg._type === 'disconnectEvent') {
@@ -372,7 +374,11 @@ async function startNotifications(port, gattId, service, characteristic) {
         characteristic: windowsCharacteristicUuid(characteristic),
     }, port);
 
-    subscriptions[subscriptionId] = port;
+    if (!subscriptions[subscriptionId]) {
+        subscriptions[subscriptionId] = new Set();
+    }
+    subscriptions[subscriptionId].add(port);
+
     portsObjects.get(port).subscriptions.add(subscriptionId);
     return subscriptionId;
 }
@@ -384,7 +390,10 @@ async function stopNotifications(port, gattId, service, characteristic) {
         characteristic: windowsCharacteristicUuid(characteristic),
     }, port);
 
-    delete subscriptions[subscriptionId];
+    subscriptions[subscriptionId].delete(port);
+    if (!subscriptions[subscriptionId].size) {
+        delete subscriptions[subscriptionId];
+    }
     portsObjects.get(port).subscriptions.delete(subscriptionId);
     return subscriptionId;
 }
@@ -517,6 +526,9 @@ chrome.runtime.onConnect.addListener((port) => {
         }
         while (portsObjects.get(port).scanCount > 0) {
             stopScanning(port);
+        }
+        for (const value of Object.values(subscriptions)) {
+            value.delete(port);
         }
 
         // close the dedicated host process if nothing else is using it
