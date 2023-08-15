@@ -6,6 +6,8 @@ let requestId = 0;
 let requests = {};
 
 let commandPorts = {};
+let activePorts = 0;
+let nativePort = null;
 
 async function nativeRequest(cmd, params, port) {
     return new Promise((resolve, reject) => {
@@ -18,7 +20,7 @@ async function nativeRequest(cmd, params, port) {
         if (debugPrints) {
             console.log('Sent native message:', msg);
         }
-        portsObjects.get(port).nativeConnection.postMessage(msg);
+        nativePort.postMessage(msg);
     });
 }
 
@@ -216,7 +218,7 @@ async function requestDevice(port, options) {
         }
     }
 
-    portsObjects.get(port).nativeConnection.onMessage.addListener(scanResultListener);
+    nativePort.onMessage.addListener(scanResultListener);
     port.postMessage({ _type: 'showDeviceChooser' });
     startScanning(port);
     try {
@@ -245,7 +247,7 @@ async function requestDevice(port, options) {
         };
     } finally {
         stopScanning(port);
-        portsObjects.get(port).nativeConnection.onMessage.removeListener(scanResultListener);
+        nativePort.onMessage.removeListener(scanResultListener);
     }
 }
 
@@ -489,16 +491,21 @@ const exportedMethods = {
 };
 
 chrome.runtime.onConnect.addListener((port) => {
+    activePorts++;
+
     portsObjects.set(port, {
         scanCount: 0,
         devices: new Set(),
         subscriptions: new Set(),
         knownDeviceIds: new Set(),
-        nativeConnection: chrome.runtime.connectNative('web_bluetooth.server'),
     });
 
-    portsObjects.get(port).nativeConnection.onMessage.addListener(nativePortOnMessage);
-    portsObjects.get(port).nativeConnection.onDisconnect.addListener(nativePortOnDisconnect);
+    if (nativePort === null) {
+        nativePort = chrome.runtime.connectNative('web_bluetooth.server');
+    }
+
+    nativePort.onMessage.addListener(nativePortOnMessage);
+    nativePort.onDisconnect.addListener(nativePortOnDisconnect);
 
     nativeRequest('ping', {}, port).then(() => {
         console.log('Connected to server');
@@ -512,8 +519,12 @@ chrome.runtime.onConnect.addListener((port) => {
             stopScanning(port);
         }
 
-        // close the dedicated host process
-        portsObjects.get(port).nativeConnection.disconnect();
+        // close the dedicated host process if nothing else is using it
+        activePorts--;
+        if (!activePorts) {
+            nativePort.disconnect();
+            nativePort = null;
+        }
     });
 
     port.onMessage.addListener((request) => {
