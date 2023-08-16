@@ -124,11 +124,11 @@ concurrency::task<IJsonValue^> connectRequest(JsonObject^ command) {
 		throw ref new FailureException(ref new String(L"Unable to connect"));
 	}
 	else {
-		for (int i = 0; i < services->Services->Size; i++) {
+		for (unsigned int i = 0; i < services->Services->Size; i++) {
 			delete services->Services->GetAt(i);
 		}
 	}
-	return JsonValue::CreateStringValue(device->DeviceId);
+	co_return JsonValue::CreateStringValue(device->DeviceId);
 }
 
 concurrency::task<IJsonValue^> disconnectRequest(JsonObject^ command) {
@@ -180,10 +180,10 @@ concurrency::task<Bluetooth::GenericAttributeProfile::GattDeviceServicesResult^>
 	}
 	Bluetooth::BluetoothLEDevice^ device = devices->Lookup(deviceId);
 	if (command->HasKey("service")) {
-		return co_await device->GetGattServicesForUuidAsync(parseUuid(command->GetNamedString("service")));
+		co_return co_await device->GetGattServicesForUuidAsync(parseUuid(command->GetNamedString("service")));
 	}
 	else {
-		return co_await device->GetGattServicesAsync();
+		co_return co_await device->GetGattServicesAsync();
 	}
 }
 
@@ -216,7 +216,7 @@ concurrency::task<Bluetooth::GenericAttributeProfile::GattCharacteristicsResult^
 		auto key = characteristicKey(command->GetNamedString("device"), command->GetNamedString("service"), characteristic->Uuid.ToString());
 		characteristicsMap->Insert(key, characteristic);
 	}
-	return results;
+	co_return results;
 }
 
 concurrency::task<Bluetooth::GenericAttributeProfile::GattCharacteristic^> getCharacteristic(JsonObject^ command) {
@@ -230,7 +230,7 @@ concurrency::task<Bluetooth::GenericAttributeProfile::GattCharacteristic^> getCh
 	}
 
 	if (characteristicsMap->HasKey(key)) {
-		return characteristicsMap->Lookup(key);
+		co_return characteristicsMap->Lookup(key);
 	}
 
 	throw ref new FailureException(ref new String(L"Requested characteristic not found"));
@@ -242,7 +242,7 @@ concurrency::task<IJsonValue^> servicesRequest(JsonObject^ command) {
 	for (unsigned int i = 0; i < servicesResult->Services->Size; i++) {
 		result->Append(JsonValue::CreateStringValue(servicesResult->Services->GetAt(i)->Uuid.ToString()));
 	}
-	return result;
+	co_return result;
 }
 
 concurrency::task<IJsonValue^> charactersticsRequest(JsonObject^ command) {
@@ -266,7 +266,7 @@ concurrency::task<IJsonValue^> charactersticsRequest(JsonObject^ command) {
 		characteristicJson->SetNamedValue("properties", properties);
 		result->Append(characteristicJson);
 	}
-	return result;
+	co_return result;
 }
 
 concurrency::task<IJsonValue^> acceptPairingRequest(JsonObject^ command) {
@@ -387,7 +387,7 @@ concurrency::task<IJsonValue^> pairRequest(JsonObject^ command) {
 	JsonObject^ response = ref new JsonObject();
 	response->Insert("_type", JsonValue::CreateStringValue("noop"));
 
-	return response;
+	co_return response;
 }
 
 concurrency::task<IJsonValue^> readRequest(JsonObject^ command, int skipPair = 0) {
@@ -395,7 +395,7 @@ concurrency::task<IJsonValue^> readRequest(JsonObject^ command, int skipPair = 0
 	auto result = co_await characteristic->ReadValueAsync();
 	if (result->Status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success && skipPair == 0) {
 		co_await pairRequest(command);
-		return co_await readRequest(command, 1);
+		co_return co_await readRequest(command, 1);
 	}
 	else if (result->Status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success) {
 		throw ref new FailureException(result->Status.ToString());
@@ -405,7 +405,7 @@ concurrency::task<IJsonValue^> readRequest(JsonObject^ command, int skipPair = 0
 	for (unsigned int i = 0; i < result->Value->Length; i++) {
 		valueArray->Append(JsonValue::CreateNumberValue(reader->ReadByte()));
 	}
-	return valueArray;
+	co_return valueArray;
 }
 
 concurrency::task<IJsonValue^> writeRequest(JsonObject^ command, int reqWriteType = 0, int skipPair = 0) {
@@ -430,13 +430,13 @@ concurrency::task<IJsonValue^> writeRequest(JsonObject^ command, int reqWriteTyp
 
 	if (status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success && skipPair == 0) {
 		co_await pairRequest(command);
-		return co_await writeRequest(command, reqWriteType, 1);
+		co_return co_await writeRequest(command, reqWriteType, 1);
 	}
 	else if (status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success) {
 		throw ref new FailureException(status.ToString());
 	}
 
-	return JsonValue::CreateNullValue();
+	co_return JsonValue::CreateNullValue();
 }
 
 unsigned long nextSubscriptionId = 1;
@@ -450,7 +450,7 @@ concurrency::task<IJsonValue^> subscribeRequest(JsonObject^ command, int skipPai
 		auto status = co_await characteristic->WriteClientCharacteristicConfigurationDescriptorAsync(Bluetooth::GenericAttributeProfile::GattClientCharacteristicConfigurationDescriptorValue::Notify);
 		if (status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success && skipPair == 0) {
 			co_await pairRequest(command);
-			return co_await subscribeRequest(command, 1);
+			co_return co_await subscribeRequest(command, 1);
 		}
 		else if (status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success) {
 			throw ref new FailureException(status.ToString());
@@ -460,7 +460,7 @@ concurrency::task<IJsonValue^> subscribeRequest(JsonObject^ command, int skipPai
 		auto status = co_await characteristic->WriteClientCharacteristicConfigurationDescriptorAsync(Bluetooth::GenericAttributeProfile::GattClientCharacteristicConfigurationDescriptorValue::Indicate);
 		if (status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success && skipPair == 0) {
 			co_await pairRequest(command);
-			return co_await subscribeRequest(command, 1);
+			co_return co_await subscribeRequest(command, 1);
 		}
 		else if (status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success) {
 			throw ref new FailureException(status.ToString());
@@ -472,7 +472,7 @@ concurrency::task<IJsonValue^> subscribeRequest(JsonObject^ command, int skipPai
 
 	auto key = characteristicKey(command);
 	if (characteristicsSubscriptionMap->HasKey(key)) {
-		return characteristicsSubscriptionMap->Lookup(key);
+		co_return characteristicsSubscriptionMap->Lookup(key);
 	}
 
 	auto subscriptionId = JsonValue::CreateNumberValue(nextSubscriptionId++);
@@ -495,7 +495,7 @@ concurrency::task<IJsonValue^> subscribeRequest(JsonObject^ command, int skipPai
 	characteristicsListenerMap->Insert(key, cookie);
 	characteristicsSubscriptionMap->Insert(key, subscriptionId);
 
-	return subscriptionId;
+	co_return subscriptionId;
 }
 
 concurrency::task<IJsonValue^> unsubscribeRequest(JsonObject^ command, int skipPair = 0) {
@@ -504,7 +504,7 @@ concurrency::task<IJsonValue^> unsubscribeRequest(JsonObject^ command, int skipP
 	auto status = co_await characteristic->WriteClientCharacteristicConfigurationDescriptorAsync(Bluetooth::GenericAttributeProfile::GattClientCharacteristicConfigurationDescriptorValue::None);
 	if (status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success && skipPair == 0) {
 		co_await pairRequest(command);
-		return co_await unsubscribeRequest(command, 1);
+		co_return co_await unsubscribeRequest(command, 1);
 	}
 	else if (status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success) {
 		throw ref new FailureException(status.ToString());
@@ -521,7 +521,7 @@ concurrency::task<IJsonValue^> unsubscribeRequest(JsonObject^ command, int skipP
 	characteristicsListenerMap->Remove(key);
 	characteristicsSubscriptionMap->Remove(key);
 
-	return subscriptionId;
+	co_return subscriptionId;
 }
 
 concurrency::task<IJsonValue^> checkAvailability(JsonObject^ command) {
