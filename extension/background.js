@@ -122,9 +122,9 @@ function windowsDescriptorUuid(uuid) {
 }
 
 let scanningCounter = 0;
-function startScanning(port) {
+async function startScanning(port) {
     if (!scanningCounter) {
-        nativeRequest('scan', {}, port);
+        await nativeRequest('scan', {}, port);
     }
     portsObjects.get(port).scanCount++;
     scanningCounter++;
@@ -222,7 +222,14 @@ async function requestDevice(port, options) {
 
     nativePort.onMessage.addListener(scanResultListener);
     port.postMessage({ _type: 'showDeviceChooser' });
-    startScanning(port);
+    try {
+        await startScanning(port);
+    } catch (error) {
+        if (error == 'The device is not ready for use.\r\n\r\nThe device is not ready for use.\r\n') {
+            port.postMessage({ _type: 'deviceChooserWinError' });
+            throw error;
+        }
+    }
     try {
         const deviceAddress = await new Promise((resolve, reject) => {
             port.onMessage.addListener(msg => {

@@ -23,6 +23,13 @@ function portMsg(message) {
         return;
     }
 
+    if (message._type === 'deviceChooserWinError') {
+        if (chooserUI) {
+            chooserUI.winError();
+        }
+        return;
+    }
+
     if (message._type === 'scanResult') {
         if (chooserUI) {
             chooserUI.updateDevice(message.bluetoothAddress, message.localName, message.rssi);
@@ -123,7 +130,7 @@ class DeviceChooserUI {
         this.shadowRoot = shadowRoot;
         shadowRoot.innerHTML = `
             <style>
-                #chooser-dialog {
+                #chooser-dialog, #windows_nobluetooth {
                     width: 380px;
                     background: white;
                     margin: 0 auto;
@@ -162,12 +169,12 @@ class DeviceChooserUI {
                     color: white;
                 }
 
-                #buttons {
+                #buttons, #buttons_windows_nobluetooth {
                     display: flex;
                     justify-content: flex-end;
                 }
 
-                #buttons button {
+                #buttons button, #buttons_windows_nobluetooth button {
                     cursor: pointer;
                     border: solid #c0c0c0 1px;
                     border-radius: 3px;
@@ -190,16 +197,31 @@ class DeviceChooserUI {
                     Powered by <a href="https://github.com/urish/web-bluetooth-polyfill" target="_blank">Web Bluetooth Polyfill</a>
                 </div>
             </dialog>
+
+            <dialog id="windows_nobluetooth">
+                <div><span><b>Unable to start scanning for Bluetooth devices.</b></span></div>
+                <div><span>Ensure that your device is Bluetooth-capable and that Bluetooth is turned on.</span></div>
+                <br>
+                <div><span><a href="ms-settings:bluetooth" target="_blank">Go to Windows Bluetooth Settings</a></span></div>
+                <br>
+                <div id="buttons_windows_nobluetooth">
+                    <button id="windows_nobluetooth_ok">OK</button>
+                </div>
+            </dialog>
         `;
 
         this.btnPair = shadowRoot.getElementById('btn-pair');
         this.deviceListElement = shadowRoot.getElementById('device-list');
         this.chooserDialog = shadowRoot.getElementById('chooser-dialog');
+        this.windows_nobluetooth = shadowRoot.getElementById('windows_nobluetooth');
+        this.windows_nobluetooth_ok = shadowRoot.getElementById('windows_nobluetooth_ok');
 
         this.chooserDialog.addEventListener('click', e => e.stopPropagation());
         shadowRoot.getElementById('hostname').innerText = document.location.hostname;
         shadowRoot.getElementById('btn-cancel').addEventListener('click', () => this.cancel());
         this.btnPair.addEventListener('click', () => this.pair());
+        this.windows_nobluetooth.addEventListener('click', e => e.stopPropagation());
+        this.windows_nobluetooth_ok.addEventListener('click', () => this.cancel());
     }
 
     show() {
@@ -214,6 +236,12 @@ class DeviceChooserUI {
 
     hide() {
         document.body.removeChild(this.container);
+    }
+
+    winError() {
+        this.chooserDialog.close();
+        this.onCancel();
+        this.windows_nobluetooth.showModal();
     }
 
     cancel() {

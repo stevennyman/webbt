@@ -316,8 +316,18 @@ if (!navigator.bluetooth) {
 
         navigator.bluetooth = {
             requestDevice: async function (...args) {
-                let result = await callExtension('requestDevice', args);
-                return new BluetoothDevice(result.address, result.name);
+                try {
+                    let result = await callExtension('requestDevice', args);
+                    return new BluetoothDevice(result.address, result.name);
+                } catch (error) {
+                    // Windows only
+                    if (error == 'The device is not ready for use.\r\n\r\nThe device is not ready for use.\r\n') {
+                        throw new Error('Unable to start scanning for Bluetooth devices. ' +
+                        'Ensure that your device is Bluetooth-capable and that Bluetooth is turned on.');
+                    } else {
+                        throw error;
+                    }
+                }
             },
             getAvailability: async function () {
                 let result = await callExtension('availability', []);
