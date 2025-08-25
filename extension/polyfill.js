@@ -2,9 +2,11 @@
 
 if (!navigator.bluetooth) {
     // eslint-disable-next-line no-console
-    console.log('Windows 10 Web Bluetooth Polyfill loaded');
+    console.log('Web Bluetooth Polyfill loaded');
 
     (function () {
+        let hostVersionErrorShown = false;
+
         const connectionSymbol = Symbol('connection');
 
         const outstandingRequests = {};
@@ -31,6 +33,11 @@ if (!navigator.bluetooth) {
                     }
                     return;
                 }
+                // TODO improve this experience
+                if (event.data.error === 'Unsupported host version' && !hostVersionErrorShown) {
+                    hostVersionErrorShown = true;
+                    alert("Web Bluetooth for Firefox: Unsupported host version installed, please install the latest correct version.");
+                }
                 const request = outstandingRequests[event.data.id];
                 if (request) {
                     if (event.data.error) {
@@ -55,7 +62,7 @@ if (!navigator.bluetooth) {
             });
         }
 
-        // Implmentation reference: https://developer.mozilla.org/en/docs/Web/API/EventTarget
+        // Implementation reference: https://developer.mozilla.org/en/docs/Web/API/EventTarget
         const listeners = Symbol('listeners');
         const originalSymbol = Symbol('original');
         class BluetoothEventTarget {
@@ -94,6 +101,8 @@ if (!navigator.bluetooth) {
                     this.oncharacteristicvaluechanged.call(this, event);
                 } else if (event.type === 'gattserverdisconnected' && this.ongattserverdisconnected ) {
                     this.ongattserverdisconnected.call(this, event);
+                } else if (event.type === 'advertisementreceived' && this.onadvertisementreceived) {
+                    this.onadvertisementreceived.call(this, event);
                 }
                 if (!(event.type in this[listeners])) {
                     return true;
@@ -281,12 +290,101 @@ if (!navigator.bluetooth) {
             }
         }
 
+        // TODO: perhaps there is a better way to implement this?
+        class ReadOnlyMap extends Map {
+            constructor(inputmap) {
+                super();
+                for (const ent of inputmap.entries()) {
+                    super.set(ent[0], ent[1]);
+                }
+            }
+            clear() {
+                throw 'Read only, not allowed';
+            }
+            delete() {
+                throw 'Read only, not allowed';
+            }
+            set() {
+                throw 'Read only, not allowed';
+            }
+        }
+
+        class BluetoothManufacturerDataMap extends ReadOnlyMap {
+
+        }
+
+        class BluetoothServiceDataMap extends ReadOnlyMap {
+
+        }
+
+        const watchingAdvertisements = Symbol('watchingAdvertisements');
         class BluetoothDevice extends BluetoothEventTarget {
             constructor(id, name) {
                 super();
                 this.id = id;
                 this.name = name;
                 this.gatt = new BluetoothRemoteGATTServer(this);
+            }
+
+            async watchAdvertisements(options) {
+                // TODO: also abort on loss of document visibility
+                if (options && 'signal' in options) {
+                    // handle the abort controller
+                    options.signal.addEventListener('abort', async () => {
+                        // unsubscribe from events and clean up listeners
+                        this[watchingAdvertisements] = false;
+                        await callExtension('stopAdvertisements', [this.id]);
+                    });
+                }
+
+                if (this[watchingAdvertisements]) {
+                    // already subscribed, do nothing
+                    return;
+                }
+
+                let result = await callExtension('watchAdvertisements', [this.id]);
+                if ('exception' in result) {
+                    throw result.exception;
+                }
+                this[watchingAdvertisements] = true;
+
+                activeSubscriptions['scanRequest_'+this.id] = (event) => {
+                    this.name = event.localName;
+                    let manufacturerDataTmp = new Map();
+                    for (const manufacturerDataEntry of event.manufacturerData) {
+                        manufacturerDataTmp.set(
+                            manufacturerDataEntry.companyIdentifier,
+                            new DataView(new Uint8Array(manufacturerDataEntry.data).buffer)
+                        );
+                    }
+                    let manufacturerData = new BluetoothManufacturerDataMap(manufacturerDataTmp);
+                    let serviceDataTmp = new Map();
+                    for (const serviceDataEntry of event.serviceData) {
+                        serviceDataTmp.set(
+                            serviceDataEntry.service,
+                            new DataView(new Uint8Array(serviceDataEntry.data).buffer)
+                        );
+                    }
+                    let serviceData = new BluetoothServiceDataMap(serviceDataTmp);
+                    this.dispatchEvent({
+                        type: 'advertisementreceived',
+                        device: this,
+                        uuids: event.serviceUuids,
+                        name: event.localName,
+                        appearance: event.appearance,
+                        txPower: event.txPower,
+                        rssi: event.rssi,
+                        manufacturerData: manufacturerData,
+                        serviceData: serviceData,
+                        // timeStamp in Chrome but not in spec?
+                        bubbles: true,
+                    });
+                };
+                return;
+            }
+
+            async forget() {
+                await callExtension('forgetDevice', [this.id]);
             }
         }
 
@@ -331,6 +429,24 @@ if (!navigator.bluetooth) {
             },
             getAvailability: async function () {
                 let result = await callExtension('availability', []);
+                return result;
+            },
+            getDevices: async function () {
+                const callResult = await callExtension('getOriginDevices', []);
+                const result = [];
+                for (const dev of callResult) {
+                    // first try for connectedDevices
+                    let foundDevice = false;
+                    for (const connectedDevice of connectedDevices) {
+                        if (connectedDevice.id === dev.address) {
+                            result.push(connectedDevice);
+                            foundDevice = true;
+                        }
+                    }
+                    if (!foundDevice) {
+                        result.push(new BluetoothDevice(dev.address, dev.name));
+                    }
+                }
                 return result;
             },
         };

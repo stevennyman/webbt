@@ -1,6 +1,8 @@
 /* eslint-disable no-console */
 
-let debugPrints = false;
+SUPPORTED_HOST_API_VERSION = 1;
+
+let debugPrints = true;
 
 let requestId = 0;
 let requests = {};
@@ -8,6 +10,8 @@ let requests = {};
 let commandPorts = {};
 let activePorts = 0;
 let nativePort = null;
+
+let listeners = {};
 
 async function nativeRequest(cmd, params, port) {
     return new Promise((resolve, reject) => {
@@ -29,6 +33,20 @@ const devices = {};
 function nativePortOnMessage(msg) {
     if (debugPrints) {
         console.log('Received native message:', msg);
+    }
+    if (msg._type === 'Start') {
+        if (msg.apiVersion != SUPPORTED_HOST_API_VERSION) {
+            nativePort.disconnect();
+            for (const reqId in requests) {
+                delete commandPorts[reqId];
+                const { reject, resolve } = requests[reqId];
+                reject('Unsupported host version');
+                delete requests[reqId];
+            }
+            requests = {};
+            commandPorts = {};
+            console.log('Unsupported host version!');
+        }
     }
     if (msg.pairingType && commandPorts[msg._id]) {
         commandPorts[msg._id].postMessage(msg);
@@ -138,6 +156,33 @@ function stopScanning(port) {
     }
 }
 
+// intended for use with manufacturerData or serviceData
+function processPrefixMask(elem, elemInner) {
+    if (elemInner.dataPrefix) {
+        let desprefix = new Uint8Array(elemInner.dataPrefix);
+        let data = new Uint8Array(elem.data);
+        if (elemInner.mask) {
+            const reqlength = desprefix.length;
+            if (elemInner.mask.length != reqlength) {
+                throw new Error('Mask length must equal prefix length');
+            }
+            for (let i = 0; i < reqlength; i++) {
+                desprefix[i] = desprefix[i] & elemInner.mask[i];
+                data[i] = data[i] & elemInner.mask[i];
+            }
+        }
+        for (let i = 0; i < desprefix.length; i++) {
+            if (i >= data.length) {
+                return false;
+            }
+            if (desprefix[i] != data[i]) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 function matchDeviceFilter(filter, device) {
     if (filter.services) {
         const deviceServices = device.serviceUuids.map(normalizeServiceUuid);
@@ -153,35 +198,16 @@ function matchDeviceFilter(filter, device) {
     }
 
     if (filter.manufacturerData) {
-        if (!filter.companyIdentifier) {
-            throw new Error('manufacturerData is missing required companyIdentifier');
-        }
         let companyIdentifierFlag = false;
         for (const elem of device.manufacturerData) {
             for (const elemInner of filter.manufacturerData) {
+                if (!elemInner.companyIdentifier) {
+                    throw new Error('manufacturerData is missing required companyIdentifier');
+                }
                 if (elem.companyIdentifier == elemInner.companyIdentifier) {
                     companyIdentifierFlag = true;
-                    if (elemInner.dataPrefix) {
-                        let desprefix = new Uint8Array(elemInner.dataPrefix);
-                        let data = new Uint8Array(elem.data);
-                        if (elemInner.mask) {
-                            const reqlength = desprefix.length;
-                            if (elemInner.mask.length != reqlength) {
-                                throw new Error('Mask length must equal prefix length');
-                            }
-                            for (let i = 0; i < reqlength; i++) {
-                                desprefix[i] = desprefix[i] & elemInner.mask[i];
-                                data[i] = data[i] & elemInner.mask[i];
-                            }
-                        }
-                        for (let i = 0; i < desprefix.length; i++) {
-                            if (i >= data.length) {
-                                return false;
-                            }
-                            if (desprefix[i] != data[i]) {
-                                return false;
-                            }
-                        }
+                    if (processPrefixMask(elem, elemInner) === false) {
+                        return false;
                     }
                 }
             }
@@ -190,13 +216,53 @@ function matchDeviceFilter(filter, device) {
             return false;
         }
     }
+
+    if (filter.serviceData) {
+        let serviceFlag = false;
+        for (const elem of device.serviceData) {
+            for (const elemInner of filter.serviceData) {
+                if (!elemInner.service) {
+                    throw new Error('serviceData is missing required service');
+                }
+                if (normalizeServiceUuid(elem.service) == normalizeServiceUuid(elemInner.service)) {
+                    serviceFlag = true;
+                    if (processPrefixMask(elem, elemInner) === false) {
+                        return false;
+                    }
+                }
+            }
+        }
+        if (!serviceFlag) {
+            return false;
+        }
+    }
     return true;
 }
 
 async function requestDevice(port, options) {
-    if (!options.filters && !options.acceptAllDevices) {
+    if ((!options.filters && !options.acceptAllDevices) || (options.filters && options.acceptAllDevices)) {
         // TODO better filters validation, proper error message
-        throw new Error('Filters must be provided');
+        // Most validation is implemented except for empty list checks
+        throw new Error('One of filters or acceptAllDevices must be provided');
+    }
+    if (options.exclusionFilters && ! options.filters) {
+        throw new Error('exclusionFilters requires filters');
+    }
+    if (options.filters) {
+        if (options.filters.manufacturerData) {
+            for (const elem of options.filters.manufacturerData) {
+                if (!elem.companyIdentifier) {
+                    throw new Error('manufacturerData is missing required companyIdentifier');
+                }
+            }
+        }
+        if (options.filters.serviceData) {
+            for (const elem of options.filters.serviceData) {
+                if (!elem.service) {
+                    throw new Error('serviceData is missing required service');
+                }
+            }
+        }
     }
 
     let deviceNames = {};
@@ -207,6 +273,9 @@ async function requestDevice(port, options) {
                 deviceNames[msg.bluetoothAddress] = msg.localName;
             } else {
                 msg.localName = deviceNames[msg.bluetoothAddress];
+            }
+            for (let i = 0; i < msg.serviceData.length; i++) {
+                msg.serviceData[i].service = normalizeServiceUuid(msg.serviceData[i].service);
             }
             deviceRssi[msg.bluetoothAddress] = msg.rssi;
             if (options.acceptAllDevices ||
@@ -248,6 +317,24 @@ async function requestDevice(port, options) {
         });
 
         portsObjects.get(port).knownDeviceIds.add(deviceAddress);
+        portsObjects.get(port).deviceIdNames[deviceAddress] = deviceNames[deviceAddress];
+
+        const storageKey = 'originDevices_'+port.sender.origin;
+        const currentOriginDevices = (await browser.storage.local.get({ [storageKey]: [] }))[storageKey];
+        let alreadyInStorage = false;
+        for (let i = 0; i < currentOriginDevices.length; i++) {
+            if (currentOriginDevices[i].address === deviceAddress) {
+                if (!(currentOriginDevices[i].name === deviceNames[deviceAddress])) {
+                    // hopefully this doesn't cause valuable names to be lost
+                    currentOriginDevices[i].name = deviceNames[deviceAddress];
+                }
+                alreadyInStorage = true;
+            }
+        }
+        if (!alreadyInStorage) {
+            currentOriginDevices.push({ address: deviceAddress, name: deviceNames[deviceAddress] });
+        }
+        await browser.storage.local.set({ [storageKey]: currentOriginDevices });
 
         return {
             address: deviceAddress,
@@ -260,9 +347,67 @@ async function requestDevice(port, options) {
     }
 }
 
+async function watchAdvertisements(port, deviceId) {
+    const storageKey = 'originDevices_'+port.sender.origin;
+    const currentOriginDevices = (await browser.storage.local.get({ [storageKey]: [] }))[storageKey];
+    let validMatchFound = false;
+    let deviceName = 'Device Name Unknown';
+    let deviceRssi = 0;
+    for (const originDevice of currentOriginDevices) {
+        if (originDevice.address === deviceId) {
+            validMatchFound = true;
+            deviceName = originDevice.name;
+            break;
+        }
+    }
+
+    // make sure device allowed for origin
+    if (!validMatchFound) {
+        return { exception: 'UnknownError' };
+    }
+
+    // TODO: throw InvalidStateError if Bluetooth off
+
+    portsObjects.get(port).knownDeviceIds.add(deviceId);
+
+    function scanResultListener(msg) {
+        msg = structuredClone(msg); // todo: is this necessary?
+        if (msg._type === 'scanResult') {
+            msg._type = 'adScanResult';
+            msg.subscriptionId = 'scanRequest_'+deviceId;
+            if (msg.bluetoothAddress === deviceId) {
+                if (msg.localName) {
+                    deviceName = msg.localName;
+                } else {
+                    msg.localName = deviceName;
+                }
+                for (let i = 0; i < msg.serviceData.length; i++) {
+                    msg.serviceData[i].service = normalizeServiceUuid(msg.serviceData[i].service);
+                }
+                deviceRssi = msg.rssi;
+                port.postMessage(msg);
+            }
+        }
+    }
+
+    listeners['dev_'+port+deviceId] = scanResultListener;
+    nativePort.onMessage.addListener(scanResultListener);
+
+    await startScanning(port);
+
+    return {};
+}
+
+async function stopAdvertisements(port, deviceId) {
+    nativePort.onMessage.removeListener(listeners['dev_'+port+deviceId]);
+    delete listeners['dev_'+port+deviceId];
+    await stopScanning(port);
+}
+
 async function gattConnect(port, address) {
     /* Security measure: make sure this device address has been
        previously returned by requestDevice() */
+    // TODO we also need to save the gattId from below
     if (!portsObjects.get(port).knownDeviceIds.has(address)) {
         throw new Error('Unknown device address');
     }
@@ -481,6 +626,44 @@ async function writeDescriptorValue(port, gattId, service, characteristic, descr
     return req;
 }
 
+async function getOriginDevices(port) {
+    const storageKey = 'originDevices_'+port.sender.origin;
+    const currentOriginDevices = (await browser.storage.local.get({ [storageKey]: [] }))[storageKey];
+    const portObj = portsObjects.get(port);
+    const devIdList = portObj.knownDeviceIds;
+    const result = new Set();
+    for (const devId of devIdList) {
+        if (portObj.deviceIdNames.has(devId)) {
+            result.add({ address: devId, name: portObj.deviceIdNames.get(devId) });
+        } else {
+            result.add({ address: devId, name: 'Device name unknown' });
+        }
+    }
+
+    for (const originDev of currentOriginDevices) {
+        if (!devIdList.has(originDev.address)) {
+            result.add(originDev);
+        }
+    }
+    return result;
+}
+
+async function forgetDevice(port, deviceId) {
+    const storageKey = 'originDevices_'+port.sender.origin;
+    const currentOriginDevices = (await browser.storage.local.get({ [storageKey]: [] }))[storageKey];
+    const portObj = portsObjects.get(port);
+    const devIdList = portObj.knownDeviceIds;
+    devIdList.remove(deviceId);
+    // TODO also remove from devices, deviceIdNames, subscriptions, also disconnect
+    for (let i = 0; i < currentOriginDevices.length; i++) {
+        if (currentOriginDevices[i].address === deviceId) {
+            currentOriginDevices.splice(i, 1);
+            i--;
+        }
+    }
+    await browser.storage.local.set({ [storageKey]: currentOriginDevices });
+}
+
 const exportedMethods = {
     requestDevice,
     gattConnect,
@@ -504,6 +687,10 @@ const exportedMethods = {
     getDescriptors,
     readDescriptorValue,
     writeDescriptorValue,
+    getOriginDevices,
+    watchAdvertisements,
+    stopAdvertisements,
+    forgetDevice,
 };
 
 chrome.runtime.onConnect.addListener((port) => {
@@ -514,6 +701,7 @@ chrome.runtime.onConnect.addListener((port) => {
         devices: new Set(),
         subscriptions: new Set(),
         knownDeviceIds: new Set(),
+        deviceIdNames: new Map(),
     });
 
     if (nativePort === null) {

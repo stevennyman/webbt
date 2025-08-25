@@ -5,6 +5,7 @@
         "nativeMessaging",
         "tabs",
         "activeTab",
+        "storage",
         "http://*/",
         "https://*/"
     ],
@@ -34,6 +35,22 @@
             ],
             "all_frames": true,
             "run_at": "document_start"
+        },
+        {
+            "matches": [
+                "https://*/*",
+                "http://localhost/*",
+                "http://127.0.0.1/*"
+            ],
+            "js": [
+                "gatt-services.js",
+                "gatt-characteristics.js",
+                "gatt-descriptors.js",
+                "polyfill.js"
+            ],
+            "all_frames": true,
+            "run_at": "document_start",
+            "world": "MAIN"
         }
     ],
     "browser_action": {

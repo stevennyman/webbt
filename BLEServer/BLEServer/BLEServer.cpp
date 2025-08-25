@@ -20,11 +20,10 @@
 #include <iomanip>
 #include <experimental/resumable>
 #include <pplawait.h>
-#include <cvt/wstring>
 #include <codecvt>
 #include <stdio.h>  
 #include <fcntl.h>  
-#include <io.h>  
+#include <io.h>
 
 using namespace Platform;
 using namespace Windows::Devices;
@@ -41,6 +40,8 @@ auto characteristicsSubscriptionMap = ref new Collections::Map<String^, JsonValu
 auto pairingRequestWaiting = ref new Collections::Map<double, String^>();
 auto pairingRequestUsername = ref new Collections::Map<double, String^>();
 auto pairingRequestPasswordPIN = ref new Collections::Map<double, String^>();
+
+auto API_VERSION = 1; // increment this when there are breaking changes to the message format
 
 std::wstring formatBluetoothAddress(unsigned long long BluetoothAddress) {
 	std::wostringstream ret;
@@ -75,7 +76,7 @@ CRITICAL_SECTION OutputCriticalSection;
 void writeObject(JsonObject^ jsonObject) {
 	String^ jsonString = jsonObject->Stringify();
 
-	stdext::cvt::wstring_convert<std::codecvt_utf8<wchar_t>> convert;
+	std::wstring_convert<std::codecvt_utf8<wchar_t>> convert;
 	std::string stringUtf8 = convert.to_bytes(jsonString->Data());
 
 	auto len = stringUtf8.length();
@@ -780,6 +781,34 @@ int main(Array<String^>^ args) {
 			msg->Insert("timestamp", JsonValue::CreateNumberValue((double)eventArgs->Timestamp.UniversalTime / 10000.0 + 11644480800000));
 			msg->Insert("advType", JsonValue::CreateStringValue(eventArgs->AdvertisementType.ToString()));
 			msg->Insert("localName", JsonValue::CreateStringValue(eventArgs->Advertisement->LocalName));
+			
+
+			// appearance
+			auto appearanceData = eventArgs->Advertisement->GetSectionsByType(0x19);
+			if (appearanceData->Size > 0) {
+				auto appearanceSection = appearanceData->GetAt(0);
+				auto reader = Windows::Storage::Streams::DataReader::FromBuffer(appearanceSection->Data);
+				unsigned short appearanceValue = reader->ReadUInt16();
+				msg->Insert("appearance", JsonValue::CreateNumberValue(appearanceValue));
+			}
+			else {
+				msg->Insert("appearance", JsonValue::CreateNullValue());
+			}
+
+			// txPower requires Windows 10 version 2004
+			if (Windows::Foundation::Metadata::ApiInformation::IsPropertyPresent(
+				"Windows.Devices.Bluetooth.Advertisement.BluetoothLEAdvertisementReceivedEventArgs",
+				"TransmitPowerLevelInDBm")) {
+				if (eventArgs->TransmitPowerLevelInDBm != nullptr) {
+					msg->Insert("txPower", JsonValue::CreateNumberValue(eventArgs->TransmitPowerLevelInDBm->Value));
+				}
+				else {
+					msg->Insert("txPower", JsonValue::CreateNullValue());
+				}
+			}
+			else {
+				msg->Insert("txPower", JsonValue::CreateNullValue());
+			}
 
 			JsonArray^ serviceUuids = ref new JsonArray();
 			for (unsigned int i = 0; i < eventArgs->Advertisement->ServiceUuids->Size; i++) {
@@ -809,12 +838,76 @@ int main(Array<String^>^ args) {
 
 			msg->Insert("manufacturerData", manufacturerDataJson);
 
+
+			auto serviceDataJson = ref new JsonArray();
+
+			auto SERVICE_DATA_TYPES = {
+				0x16, // Service Data - 16-bit UUID
+				0x20, // Service Data - 32-bit UUID
+				0x21, // Service Data - 128-bit UUID
+			};
+
+			for (auto type : SERVICE_DATA_TYPES) {
+				auto serviceData = eventArgs->Advertisement->GetSectionsByType(type);
+				for (auto serviceDataSection : serviceData) {
+					auto reader = Windows::Storage::Streams::DataReader::FromBuffer(serviceDataSection->Data);
+
+					auto serviceDataInner = ref new JsonObject();
+
+					switch (type)
+					{
+						case 0x16:
+						{
+							unsigned short uuid16 = reader->ReadUInt16();
+							auto valueArray = ref new JsonArray();
+							while (reader->UnconsumedBufferLength > 0) {
+								valueArray->Append(JsonValue::CreateNumberValue(reader->ReadByte()));
+							}
+							serviceDataInner->Insert("service", JsonValue::CreateNumberValue(uuid16));
+							serviceDataInner->Insert("data", valueArray);
+							break;
+						}
+						case 0x20:
+						{
+							unsigned int uuid32 = reader->ReadUInt32();
+							auto valueArray = ref new JsonArray();
+							while (reader->UnconsumedBufferLength > 0) {
+								valueArray->Append(JsonValue::CreateNumberValue(reader->ReadByte()));
+							}
+							serviceDataInner->Insert("service", JsonValue::CreateNumberValue(uuid32));
+							serviceDataInner->Insert("data", valueArray);
+							break;
+						}
+						case 0x21:
+						{
+							auto uuid128 = reader->ReadGuid();
+							auto valueArray = ref new JsonArray();
+							while (reader->UnconsumedBufferLength > 0) {
+								valueArray->Append(JsonValue::CreateNumberValue(reader->ReadByte()));
+							}
+							serviceDataInner->Insert("service", JsonValue::CreateStringValue(uuid128.ToString()));
+							serviceDataInner->Insert("data", valueArray);
+							break;
+						}
+						default:
+						{
+							break;
+						}
+					}
+
+					serviceDataJson->Append(serviceDataInner);
+				}
+			}
+
+			msg->Insert("serviceData", serviceDataJson);
+
 			// TODO flags / data sections ?
 			writeObject(msg);
 		});
 
 	JsonObject^ msg = ref new JsonObject();
 	msg->Insert("_type", JsonValue::CreateStringValue("Start"));
+	msg->Insert("apiVersion", JsonValue::CreateNumberValue(API_VERSION));
 	writeObject(msg);
 
 	// Set STDIN / STDOUT to binary mode
@@ -822,7 +915,7 @@ int main(Array<String^>^ args) {
 		return -1;
 	}
 
-	stdext::cvt::wstring_convert<std::codecvt_utf8<wchar_t>> convert;
+	std::wstring_convert<std::codecvt_utf8<wchar_t>> convert;
 	try {
 		while (!std::cin.eof()) {
 			unsigned int len = 0;
