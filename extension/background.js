@@ -653,7 +653,7 @@ async function forgetDevice(port, deviceId) {
     const currentOriginDevices = (await browser.storage.local.get({ [storageKey]: [] }))[storageKey];
     const portObj = portsObjects.get(port);
     const devIdList = portObj.knownDeviceIds;
-    devIdList.remove(deviceId);
+    devIdList.delete(deviceId);
     // TODO also remove from devices, deviceIdNames, subscriptions, also disconnect
     for (let i = 0; i < currentOriginDevices.length; i++) {
         if (currentOriginDevices[i].address === deviceId) {

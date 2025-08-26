@@ -194,7 +194,8 @@ class DeviceChooserUI {
                     <button id="btn-pair">Pair</button>
                 </div>
                 <div id="footer">
-                    Powered by <a href="https://github.com/urish/web-bluetooth-polyfill" target="_blank">Web Bluetooth Polyfill</a>
+                    This website will be able to retain access to this device during future page loads. <br /> <br />
+                    Powered by <a href="https://github.com/stevennyman/web-bluetooth-firefox" target="_blank">Web Bluetooth for Firefox</a>
                 </div>
             </dialog>
 
