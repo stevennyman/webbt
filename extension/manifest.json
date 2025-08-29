@@ -1,6 +1,6 @@
 {
-    "name": "Web Bluetooth Polyfill",
-    "description": "Firefox Web Bluetooth API Polyfill",
+    "name": "Web Bluetooth for Firefox",
+    "description": "Web Bluetooth API Polyfill for Firefox",
     "permissions": [
         "nativeMessaging",
         "tabs",
@@ -54,7 +54,7 @@
         }
     ],
     "browser_action": {
-        "default_title": "Web Bluetooth Polyfill"
+        "default_title": "Web Bluetooth for Firefox"
     },
     "version": "0.5.0",
     "manifest_version": 2,
