@@ -453,7 +453,7 @@ if (!navigator.bluetooth) {
                         }
                     }
                     if (!foundDevice) {
-                        result.push(new BluetoothDevice(dev.address, dev.name));
+                        result.push(new BluetoothDevice(dev.address, dev.name, dev.gattId));
                     }
                 }
                 return result;
