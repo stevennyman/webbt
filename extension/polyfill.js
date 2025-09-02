@@ -26,6 +26,14 @@ if (!navigator.bluetooth) {
                         });
                     return;
                 }
+                if (event.data.event === 'gattIdUpdateEvent') {
+                    Array.from(connectedDevices)
+                        .filter(d => d.id === event.data.address)
+                        .forEach(matchingDevice => {
+                            matchingDevice._gattId = event.data.gattId;
+                        });
+                    return;
+                }
                 if (event.data.subscriptionId) {
                     const subscription = activeSubscriptions[event.data.subscriptionId];
                     if (subscription) {
@@ -319,10 +327,11 @@ if (!navigator.bluetooth) {
 
         const watchingAdvertisements = Symbol('watchingAdvertisements');
         class BluetoothDevice extends BluetoothEventTarget {
-            constructor(id, name) {
+            constructor(id, name, _gattId = null) {
                 super();
                 this.id = id;
                 this.name = name;
+                this._gattId = _gattId;
                 this.gatt = new BluetoothRemoteGATTServer(this);
             }
 
@@ -333,7 +342,7 @@ if (!navigator.bluetooth) {
                     options.signal.addEventListener('abort', async () => {
                         // unsubscribe from events and clean up listeners
                         this[watchingAdvertisements] = false;
-                        await callExtension('stopAdvertisements', [this.id]);
+                        await callExtension('stopAdvertisements', [this.id, this._gattId]);
                     });
                 }
 
@@ -342,7 +351,7 @@ if (!navigator.bluetooth) {
                     return;
                 }
 
-                let result = await callExtension('watchAdvertisements', [this.id]);
+                let result = await callExtension('watchAdvertisements', [this.id, this._gattId]);
                 if ('exception' in result) {
                     throw result.exception;
                 }
@@ -416,7 +425,7 @@ if (!navigator.bluetooth) {
             requestDevice: async function (...args) {
                 try {
                     let result = await callExtension('requestDevice', args);
-                    return new BluetoothDevice(result.address, result.name);
+                    return new BluetoothDevice(result.address, result.name, result.gattId);
                 } catch (error) {
                     // Windows only
                     if (error == 'The device is not ready for use.\r\n\r\nThe device is not ready for use.\r\n') {

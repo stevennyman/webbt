@@ -10,13 +10,14 @@ function disconnectport() {
         port = null;
     }
 }
+// TODO this might not be correct. Only supposed to disconnect active scanning.
 window.addEventListener('pagehide', disconnectport);
 
 function portMsg(message) {
     if (message._type === 'showDeviceChooser') {
         if (!chooserUI) {
             chooserUI = new DeviceChooserUI();
-            chooserUI.onPair = deviceId => port.postMessage({ cmd: 'chooserPair', deviceId });
+            chooserUI.onPair = (deviceId, gattId) => port.postMessage({ cmd: 'chooserPair', deviceId, gattId });
             chooserUI.onCancel = () => port.postMessage({ cmd: 'chooserCancel' });
         }
         chooserUI.show();
@@ -32,7 +33,7 @@ function portMsg(message) {
 
     if (message._type === 'scanResult') {
         if (chooserUI) {
-            chooserUI.updateDevice(message.bluetoothAddress, message.localName, message.rssi);
+            chooserUI.updateDevice(message.bluetoothAddress, message.localName, message.gattId);
         }
         return;
     }
@@ -252,19 +253,20 @@ class DeviceChooserUI {
 
     pair() {
         this.hide();
-        this.onPair(this.selectedDeviceId);
+        this.onPair(this.selectedDeviceId, this.selectedGattId);
     }
 
-    updateDevice(address, name) {
+    updateDevice(address, name, gattId) {
         let deviceElement = this.shadowRoot.querySelector(`.device-item[bluetoothId='${address}']`);
         if (!deviceElement) {
             deviceElement = document.createElement('div');
             deviceElement.tabIndex = 0;
             deviceElement.ariaRole = 'button';
             deviceElement.setAttribute('bluetoothId', address);
+            deviceElement.setAttribute('gattId', gattId);
             deviceElement.classList.add('device-item');
             deviceElement.innerText = address.toUpperCase();
-            deviceElement.addEventListener('click', () => this.selectDevice(address, deviceElement));
+            deviceElement.addEventListener('click', () => this.selectDevice(address, deviceElement, gattId));
             deviceElement.addEventListener('keydown', e => {
                 if (e.keyCode === 13 || e.keyCode === 32) {
                     this.selectDevice(address, deviceElement);
@@ -279,8 +281,9 @@ class DeviceChooserUI {
         // TODO handle duplicate device names?
     }
 
-    selectDevice(address, deviceElement) {
+    selectDevice(address, deviceElement, gattId) {
         this.selectedDeviceId = address;
+        this.selectedGattId = gattId;
         this.btnPair.disabled = false;
         const previousSelected = this.deviceListElement.querySelector('.selected');
         if (previousSelected) {

@@ -83,7 +83,8 @@ function nativePortOnMessage(msg) {
     }
 }
 
-let portsObjects = new WeakMap();
+const portsObjects = new Map();
+const subscriptionOrigins = {};
 const characteristicCache = {};
 
 function nativePortOnDisconnect() {
@@ -300,7 +301,7 @@ async function requestDevice(port, options) {
         }
     }
     try {
-        const deviceAddress = await new Promise((resolve, reject) => {
+        const deviceInfo = await new Promise((resolve, reject) => {
             port.onMessage.addListener(msg => {
                 if (msg.type === 'WebBluetoothPolyPageToCS') {
                     // This is a message from the page itself, not from the content script.
@@ -308,7 +309,7 @@ async function requestDevice(port, options) {
                     return;
                 }
                 if (msg.cmd === 'chooserPair') {
-                    resolve(msg.deviceId);
+                    resolve({deviceAddress: msg.deviceId, gattId: msg.gattId});
                 }
                 if (msg.cmd === 'chooserCancel') {
                     reject(new Error('User canceled device chooser'));
@@ -316,7 +317,13 @@ async function requestDevice(port, options) {
             });
         });
 
+        const deviceAddress = deviceInfo.deviceAddress;
+        const gattId = deviceInfo.gattId;
+
         portsObjects.get(port).knownDeviceIds.add(deviceAddress);
+        if (gattId) {
+            portsObjects.get(port).knownGattIds.add(gattId);
+        }
         portsObjects.get(port).deviceIdNames[deviceAddress] = deviceNames[deviceAddress];
 
         const storageKey = 'originDevices_'+port.sender.origin;
@@ -324,15 +331,15 @@ async function requestDevice(port, options) {
         let alreadyInStorage = false;
         for (let i = 0; i < currentOriginDevices.length; i++) {
             if (currentOriginDevices[i].address === deviceAddress) {
+                alreadyInStorage = true;
                 if (!(currentOriginDevices[i].name === deviceNames[deviceAddress])) {
                     // hopefully this doesn't cause valuable names to be lost
                     currentOriginDevices[i].name = deviceNames[deviceAddress];
                 }
-                alreadyInStorage = true;
             }
         }
         if (!alreadyInStorage) {
-            currentOriginDevices.push({ address: deviceAddress, name: deviceNames[deviceAddress] });
+            currentOriginDevices.push({ address: deviceAddress, name: deviceNames[deviceAddress], gattId: gattId });
         }
         await browser.storage.local.set({ [storageKey]: currentOriginDevices });
 
@@ -340,6 +347,7 @@ async function requestDevice(port, options) {
             address: deviceAddress,
             __rssi: deviceRssi[deviceAddress],
             name: deviceNames[deviceAddress],
+            gattId: gattId,
         };
     } finally {
         stopScanning(port);
@@ -347,14 +355,14 @@ async function requestDevice(port, options) {
     }
 }
 
-async function watchAdvertisements(port, deviceId) {
+async function watchAdvertisements(port, address, gattId) {
     const storageKey = 'originDevices_'+port.sender.origin;
     const currentOriginDevices = (await browser.storage.local.get({ [storageKey]: [] }))[storageKey];
     let validMatchFound = false;
     let deviceName = 'Device Name Unknown';
     let deviceRssi = 0;
     for (const originDevice of currentOriginDevices) {
-        if (originDevice.address === deviceId) {
+        if (originDevice.address === address || (gattId && originDevice.gattId === gattId)) {
             validMatchFound = true;
             deviceName = originDevice.name;
             break;
@@ -368,14 +376,15 @@ async function watchAdvertisements(port, deviceId) {
 
     // TODO: throw InvalidStateError if Bluetooth off
 
-    portsObjects.get(port).knownDeviceIds.add(deviceId);
+    portsObjects.get(port).knownDeviceIds.add(address);
+    portsObjects.get(port).knownGattIds.add(gattId);
 
     function scanResultListener(msg) {
         msg = structuredClone(msg); // todo: is this necessary?
         if (msg._type === 'scanResult') {
             msg._type = 'adScanResult';
-            msg.subscriptionId = 'scanRequest_'+deviceId;
-            if (msg.bluetoothAddress === deviceId) {
+            msg.subscriptionId = 'scanRequest_'+address;
+            if (msg.bluetoothAddress === address || msg.gattId === gattId) {
                 if (msg.localName) {
                     deviceName = msg.localName;
                 } else {
@@ -390,7 +399,7 @@ async function watchAdvertisements(port, deviceId) {
         }
     }
 
-    listeners['dev_'+port+deviceId] = scanResultListener;
+    listeners['dev_'+port+address] = scanResultListener;
     nativePort.onMessage.addListener(scanResultListener);
 
     await startScanning(port);
@@ -398,9 +407,9 @@ async function watchAdvertisements(port, deviceId) {
     return {};
 }
 
-async function stopAdvertisements(port, deviceId) {
-    nativePort.onMessage.removeListener(listeners['dev_'+port+deviceId]);
-    delete listeners['dev_'+port+deviceId];
+async function stopAdvertisements(port, address, gattId) {
+    nativePort.onMessage.removeListener(listeners['dev_'+port+address]);
+    delete listeners['dev_'+port+address];
     await stopScanning(port);
 }
 
@@ -418,17 +427,38 @@ async function gattConnect(port, address) {
         devices[gattId] = new Set();
     }
     devices[gattId].add(port);
+
+    // this is the location where the gattId is to be saved/associated with the device
+    const storageKey = 'originDevices_'+port.sender.origin;
+    const currentOriginDevices = (await browser.storage.local.get({ [storageKey]: [] }))[storageKey];
+    let alreadyInStorage = false;
+    for (let i = 0; i < currentOriginDevices.length; i++) {
+        if (currentOriginDevices[i].address === address) {
+            alreadyInStorage = true;
+            if (!(currentOriginDevices[i].gattId === gattId)) {
+                currentOriginDevices[i].gattId = gattId;
+            }
+        }
+    }
+    if (!alreadyInStorage) {
+        currentOriginDevices.push({ address: address, name: deviceNames[address], gattId: gattId });
+    }
+    await browser.storage.local.set({ [storageKey]: currentOriginDevices });
+    port.postMessage({ event: "gattIdUpdateEvent", address: address, gattId: gattId });
     return gattId;
 }
 
 async function gattDisconnect(port, gattId) {
     portsObjects.get(port).devices.delete(gattId);
-    devices[gattId].delete(port);
-    if (devices[gattId].size === 0) {
-        delete characteristicCache[gattId];
-        delete devices[gattId];
-        return await nativeRequest('disconnect', { device: gattId }, port);
+    if (gattId in devices) {
+        devices[gattId].delete(port);
+        if (devices[gattId].size === 0) {
+            delete characteristicCache[gattId];
+            delete devices[gattId];
+            return await nativeRequest('disconnect', { device: gattId }, port);
+        }
     }
+
 }
 
 async function getPrimaryService(port, gattId, service) {
@@ -531,6 +561,7 @@ async function startNotifications(port, gattId, service, characteristic) {
     }
     subscriptions[subscriptionId].add(port);
 
+    ((subscriptionOrigins[port.sender.origin] ??= {})[gattId] ??= []).push([service, characteristic, port]);
     portsObjects.get(port).subscriptions.add(subscriptionId);
     return subscriptionId;
 }
@@ -546,6 +577,16 @@ async function stopNotifications(port, gattId, service, characteristic) {
     if (!subscriptions[subscriptionId].size) {
         delete subscriptions[subscriptionId];
     }
+
+    // remove subscriptionOrigins entry and clean up empty keys if needed
+    const originSubscriptions = subscriptionOrigins[port.sender.origin][gattId];
+    const index = originSubscriptions.findIndex(
+        ([svc, char, prt]) => svc === service && char === characteristic && prt === port
+    );
+    if (index > -1) originSubscriptions.splice(index, 1);
+    if (!originSubscriptions.length) delete subscriptionOrigins[port.sender.origin][gattId];
+    if (!Object.keys(subscriptionOrigins[port.sender.origin]).length) delete subscriptionOrigins[port.sender.origin];
+
     portsObjects.get(port).subscriptions.delete(subscriptionId);
     return subscriptionId;
 }
@@ -629,38 +670,53 @@ async function writeDescriptorValue(port, gattId, service, characteristic, descr
 async function getOriginDevices(port) {
     const storageKey = 'originDevices_'+port.sender.origin;
     const currentOriginDevices = (await browser.storage.local.get({ [storageKey]: [] }))[storageKey];
-    const portObj = portsObjects.get(port);
-    const devIdList = portObj.knownDeviceIds;
     const result = new Set();
-    for (const devId of devIdList) {
-        if (portObj.deviceIdNames.has(devId)) {
-            result.add({ address: devId, name: portObj.deviceIdNames.get(devId) });
-        } else {
-            result.add({ address: devId, name: 'Device name unknown' });
-        }
-    }
 
     for (const originDev of currentOriginDevices) {
-        if (!devIdList.has(originDev.address)) {
-            result.add(originDev);
-        }
+        result.add(originDev);
     }
     return result;
 }
 
-async function forgetDevice(port, deviceId) {
-    const storageKey = 'originDevices_'+port.sender.origin;
+async function forgetDevice(port, deviceId, origin = null) {
+    const desiredOrigin = (origin ?? port.sender.origin);
+    const storageKey = 'originDevices_'+desiredOrigin;
     const currentOriginDevices = (await browser.storage.local.get({ [storageKey]: [] }))[storageKey];
-    const portObj = portsObjects.get(port);
-    const devIdList = portObj.knownDeviceIds;
-    devIdList.delete(deviceId);
-    // TODO also remove from devices, deviceIdNames, subscriptions, also disconnect
-    for (let i = 0; i < currentOriginDevices.length; i++) {
+        for (let i = 0; i < currentOriginDevices.length; i++) {
         if (currentOriginDevices[i].address === deviceId) {
             currentOriginDevices.splice(i, 1);
             i--;
         }
     }
+    if (currentOriginDevices.length === 0) {
+        await browser.storage.local.remove(storageKey);
+    }
+    // this needs to affect all connections to a given domain name
+    for (const portObj of portsObjects) {
+        console.log(portObj[0]);
+        if (portObj[0].sender.origin === desiredOrigin) {
+            // gattDisconnect removes from devices and disconnects
+            await gattDisconnect(portObj[0], deviceId);
+            console.log(portObj[1]);
+            portObj[1].knownDeviceIds.delete(deviceId);
+
+            // TODO check this
+            const devIdNames = portObj[1].deviceIdNames;
+            delete devIdNames[deviceId];
+        }
+    }
+
+    // also remove from subscriptions
+    if (desiredOrigin in subscriptionOrigins && deviceId in subscriptionOrigins[desiredOrigin]) {
+        const subList = subscriptionOrigins[desiredOrigin][deviceId];
+        for (const elem of subList) {
+            await stopNotifications(elem[2], deviceId, elem[0], elem[1]);
+        }
+    }
+
+
+    // TODO refactor connection to primarily use gatt IDs?
+
     await browser.storage.local.set({ [storageKey]: currentOriginDevices });
 }
 
@@ -701,6 +757,7 @@ chrome.runtime.onConnect.addListener((port) => {
         devices: new Set(),
         subscriptions: new Set(),
         knownDeviceIds: new Set(),
+        knownGattIds: new Set(),
         deviceIdNames: new Map(),
     });
 
@@ -732,6 +789,9 @@ chrome.runtime.onConnect.addListener((port) => {
             nativePort.disconnect();
             nativePort = null;
         }
+
+        // this approximates the previous WeakMap usage for portsObjects
+        portsObjects.delete(port);
     });
 
     port.onMessage.addListener((request) => {

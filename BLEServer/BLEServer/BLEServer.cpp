@@ -41,6 +41,9 @@ auto pairingRequestWaiting = ref new Collections::Map<double, String^>();
 auto pairingRequestUsername = ref new Collections::Map<double, String^>();
 auto pairingRequestPasswordPIN = ref new Collections::Map<double, String^>();
 
+auto bluetoothAddressGattIdMap = ref new Collections::Map<unsigned long long, String^>();
+std::unordered_map<unsigned long long, concurrency::task_completion_event<String^>> bleInProgressLookups;
+
 auto API_VERSION = 1; // increment this when there are breaking changes to the message format
 
 std::wstring formatBluetoothAddress(unsigned long long BluetoothAddress) {
@@ -72,6 +75,7 @@ Guid parseUuid(String^ uuid) {
 }
 
 CRITICAL_SECTION OutputCriticalSection;
+CRITICAL_SECTION BLELookupCriticalSection;
 
 void writeObject(JsonObject^ jsonObject) {
 	String^ jsonString = jsonObject->Stringify();
@@ -118,17 +122,26 @@ concurrency::task<IJsonValue^> connectRequest(JsonObject^ command) {
 		});
 	// Force a connection upon device selection
 	// https://learn.microsoft.com/en-us/uwp/api/windows.devices.bluetooth.bluetoothledevice.frombluetoothaddressasync?view=winrt-19041#windows-devices-bluetooth-bluetoothledevice-frombluetoothaddressasync(system-uint64)
-	auto services = co_await device->GetGattServicesAsync(Bluetooth::BluetoothCacheMode::Uncached);
-	if (services->Status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success) {
-		// todo: more specific error message
-		// https://learn.microsoft.com/en-us/uwp/api/windows.devices.bluetooth.genericattributeprofile.gattcommunicationstatus?view=winrt-19041
-		throw ref new FailureException(ref new String(L"Unable to connect"));
-	}
-	else {
-		for (unsigned int i = 0; i < services->Services->Size; i++) {
-			delete services->Services->GetAt(i);
+	int maxattempt = 3;
+	for (int attemptcnt = 0; attemptcnt < maxattempt; attemptcnt++) {
+		auto services = co_await device->GetGattServicesAsync(Bluetooth::BluetoothCacheMode::Uncached);
+		if (services->Status != Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success) {
+			// todo: more specific error message
+			// https://learn.microsoft.com/en-us/uwp/api/windows.devices.bluetooth.genericattributeprofile.gattcommunicationstatus?view=winrt-19041
+			if (attemptcnt == maxattempt - 1) {
+				throw ref new FailureException(services->Status.ToString());
+			}
+			co_await concurrency::create_task([] { Sleep(3000); });
+		}
+		else {
+			break;
 		}
 	}
+
+	EnterCriticalSection(&BLELookupCriticalSection);
+	bluetoothAddressGattIdMap->Insert(address, device->DeviceId);
+	LeaveCriticalSection(&BLELookupCriticalSection);
+
 	co_return JsonValue::CreateStringValue(device->DeviceId);
 }
 
@@ -767,6 +780,10 @@ int main(Array<String^>^ args) {
 		return -1;
 	}
 
+	if (!InitializeCriticalSectionAndSpinCount(&BLELookupCriticalSection, 0x00000400)) {
+		return -1;
+	}
+
 	bleAdvertisementWatcher = ref new Bluetooth::Advertisement::BluetoothLEAdvertisementWatcher();
 	bleAdvertisementWatcher->ScanningMode = Bluetooth::Advertisement::BluetoothLEScanningMode::Active;
 	bleAdvertisementWatcher->Received += ref new Windows::Foundation::TypedEventHandler<Bluetooth::Advertisement::BluetoothLEAdvertisementWatcher^, Windows::Devices::Bluetooth::Advertisement::BluetoothLEAdvertisementReceivedEventArgs^>(
@@ -782,7 +799,6 @@ int main(Array<String^>^ args) {
 			msg->Insert("advType", JsonValue::CreateStringValue(eventArgs->AdvertisementType.ToString()));
 			msg->Insert("localName", JsonValue::CreateStringValue(eventArgs->Advertisement->LocalName));
 			
-
 			// appearance
 			auto appearanceData = eventArgs->Advertisement->GetSectionsByType(0x19);
 			if (appearanceData->Size > 0) {
@@ -902,8 +918,71 @@ int main(Array<String^>^ args) {
 			msg->Insert("serviceData", serviceDataJson);
 
 			// TODO flags / data sections ?
-			writeObject(msg);
-		});
+
+			auto bluetoothAddress = eventArgs->BluetoothAddress;
+
+			EnterCriticalSection(&BLELookupCriticalSection);
+			if (bluetoothAddressGattIdMap->HasKey(bluetoothAddress) && !(bluetoothAddressGattIdMap->Lookup(bluetoothAddress)->Equals(""))) {
+				auto gattId = bluetoothAddressGattIdMap->Lookup(bluetoothAddress);
+				LeaveCriticalSection(&BLELookupCriticalSection);
+				msg->Insert("gattId", !(gattId->Equals("")) ? JsonValue::CreateStringValue(gattId) : JsonValue::CreateNullValue());
+				writeObject(msg);
+				return;
+			}
+			else {
+				if (bleInProgressLookups.find(bluetoothAddress) == bleInProgressLookups.end()) {
+					// TODO: possible memory leak, consider adding expiration
+					bleInProgressLookups.emplace(bluetoothAddress, concurrency::task_completion_event<String^>());
+					LeaveCriticalSection(&BLELookupCriticalSection);
+					concurrency::create_task([bluetoothAddress]()->concurrency::task<void> {
+						EnterCriticalSection(&BLELookupCriticalSection);
+						auto tce = bleInProgressLookups.at(bluetoothAddress);
+						LeaveCriticalSection(&BLELookupCriticalSection);
+						auto bleDevice = co_await Bluetooth::BluetoothLEDevice::FromBluetoothAddressAsync(bluetoothAddress);
+						if (bleDevice != nullptr) {
+							EnterCriticalSection(&BLELookupCriticalSection);
+							bluetoothAddressGattIdMap->Insert(bluetoothAddress, bleDevice->DeviceId);
+							LeaveCriticalSection(&BLELookupCriticalSection);
+							tce.set(bleDevice->DeviceId);
+						}
+						else {
+							EnterCriticalSection(&BLELookupCriticalSection);
+							bluetoothAddressGattIdMap->Insert(bluetoothAddress, ref new String(L""));
+							LeaveCriticalSection(&BLELookupCriticalSection);
+							tce.set(ref new String(L""));
+						}
+					});
+				}
+				else {
+					LeaveCriticalSection(&BLELookupCriticalSection);
+				}
+
+				auto msgStr = msg->Stringify();
+				concurrency::create_task([bluetoothAddress, msgStr]()->concurrency::task<void> {
+					JsonObject^ msg = JsonObject::Parse(msgStr);
+
+					EnterCriticalSection(&BLELookupCriticalSection);
+					auto tce = bleInProgressLookups.at(bluetoothAddress);
+					LeaveCriticalSection(&BLELookupCriticalSection);
+					auto gattIdFromTce = co_await concurrency::task<String^>(tce);
+					
+					String^ gattId;
+					EnterCriticalSection(&BLELookupCriticalSection);
+					if (bluetoothAddressGattIdMap->HasKey(bluetoothAddress)) {
+						gattId = bluetoothAddressGattIdMap->Lookup(bluetoothAddress);
+					}
+					else {
+						gattId = gattIdFromTce;
+						//bluetoothAddressGattIdMap->Insert(bluetoothAddress, gattId);
+					}
+					LeaveCriticalSection(&BLELookupCriticalSection);
+
+					msg->Insert("gattId", !(gattId->Equals("")) ? JsonValue::CreateStringValue(gattId) : JsonValue::CreateNullValue());
+					writeObject(msg);
+				});
+			}
+		}
+	);
 
 	JsonObject^ msg = ref new JsonObject();
 	msg->Insert("_type", JsonValue::CreateStringValue("Start"));
