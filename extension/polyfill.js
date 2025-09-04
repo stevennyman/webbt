@@ -352,7 +352,7 @@ if (!navigator.bluetooth) {
                 }
 
                 let result = await callExtension('watchAdvertisements', [this.id, this._gattId]);
-                if ('exception' in result) {
+                if (result && 'exception' in result) {
                     throw result.exception;
                 }
                 this[watchingAdvertisements] = true;
@@ -393,7 +393,7 @@ if (!navigator.bluetooth) {
             }
 
             async forget() {
-                await callExtension('forgetDevice', [this.id]);
+                await callExtension('forgetDevice', [this.id, this._gattId]);
             }
         }
 

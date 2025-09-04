@@ -12,6 +12,7 @@ let activePorts = 0;
 let nativePort = null;
 
 let listeners = {};
+let listenercnts = {};
 
 async function nativeRequest(cmd, params, port) {
     return new Promise((resolve, reject) => {
@@ -30,6 +31,7 @@ async function nativeRequest(cmd, params, port) {
 
 const subscriptions = {};
 const devices = {};
+
 function nativePortOnMessage(msg) {
     if (debugPrints) {
         console.log('Received native message:', msg);
@@ -374,6 +376,13 @@ async function watchAdvertisements(port, address, gattId) {
         return { exception: 'UnknownError' };
     }
 
+    if ('dev_'+port+gattId in listenercnts) {
+        listenercnts['dev_'+port+gattId]++;
+        return;
+    } else {
+        listenercnts['dev_'+port+gattId] = 1;
+    }
+
     // TODO: throw InvalidStateError if Bluetooth off
 
     portsObjects.get(port).knownDeviceIds.add(address);
@@ -399,7 +408,7 @@ async function watchAdvertisements(port, address, gattId) {
         }
     }
 
-    listeners['dev_'+port+address] = scanResultListener;
+    listeners['dev_'+port+gattId] = scanResultListener;
     nativePort.onMessage.addListener(scanResultListener);
 
     await startScanning(port);
@@ -407,10 +416,19 @@ async function watchAdvertisements(port, address, gattId) {
     return {};
 }
 
-async function stopAdvertisements(port, address, gattId) {
-    nativePort.onMessage.removeListener(listeners['dev_'+port+address]);
-    delete listeners['dev_'+port+address];
-    await stopScanning(port);
+async function stopAdvertisements(port, address, gattId, stopAll = false) {
+    if ('dev_'+port+gattId in listeners) {
+        listenercnts['dev_'+port+gattId]--;
+        if (stopAll) {
+            listenercnts['dev_'+port+gattId] = 0;
+        }
+        if (listenercnts['dev_'+port+gattId] == 0) {
+            nativePort.onMessage.removeListener(listeners['dev_'+port+gattId]);
+            delete listeners['dev_'+port+gattId];
+            delete listenercnts['dev_'+port+gattId];
+            await stopScanning(port);
+        }
+    }
 }
 
 async function gattConnect(port, address) {
@@ -678,7 +696,7 @@ async function getOriginDevices(port) {
     return result;
 }
 
-async function forgetDevice(port, deviceId, origin = null) {
+async function forgetDevice(port, deviceId, gattId, origin = null) {
     const desiredOrigin = (origin ?? port.sender.origin);
     const storageKey = 'originDevices_'+desiredOrigin;
     const currentOriginDevices = (await browser.storage.local.get({ [storageKey]: [] }))[storageKey];
@@ -714,6 +732,8 @@ async function forgetDevice(port, deviceId, origin = null) {
         }
     }
 
+    // also stop advertisements
+    await stopAdvertisements(port, null, gattId, true);    
 
     // TODO refactor connection to primarily use gatt IDs?
 
