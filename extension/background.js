@@ -733,11 +733,15 @@ async function forgetDevice(port, deviceId, gattId, origin = null) {
     }
 
     // also stop advertisements
-    await stopAdvertisements(port, null, gattId, true);    
+    await stopAdvertisements(port, deviceId, gattId, true);    
 
     // TODO refactor connection to primarily use gatt IDs?
 
-    await browser.storage.local.set({ [storageKey]: currentOriginDevices });
+    if (currentOriginDevices.length === 0) {
+        await browser.storage.local.remove(storageKey);
+    } else {
+        await browser.storage.local.set({ [storageKey]: currentOriginDevices });
+    }
 }
 
 const exportedMethods = {
