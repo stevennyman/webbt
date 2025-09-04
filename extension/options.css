@@ -1,0 +1,48 @@
+h1 {
+    margin-bottom: 3px;
+}
+h2 {
+    margin-top: 10px;
+    margin-bottom: 3px;
+}
+h3 {
+    margin-top: 0px;
+    margin-bottom: 1px;
+}
+h4 {
+    margin-top: 0px
+}
+@media (prefers-color-scheme: dark) {
+    body {
+        background: #23222b;
+        color: #CCCCCC;
+    }
+    /* TODO: tweak these button colors */
+    /* no idea why a canonical dark mode CSS isn't included in web browsers */
+    button, select, option {
+        background-color: #23222b;
+        color: #CCCCCC;
+        border-radius: 2px;
+        border-style: solid;
+        border-color: #999999
+    }
+    button:hover, select:hover, option:hover {
+        background-color: #434346;
+        border-color: #bbbbbb
+    }
+    button:active, select:active {
+        background-color: #616166;
+        border-color: #e2dede
+    }
+    input {
+        background-color: #23222b;
+        color: #CCCCCC;
+        border-width: thin;
+    }
+    a:link {
+        color: cornflowerblue;
+    }
+    a:visited {
+        color: orchid;
+    }
+}

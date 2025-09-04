@@ -1,17 +1,13 @@
-let port;
+let port = chrome.runtime.connect();
+
+// todo: don't redraw entire DOM when options changed since this doesn't scale
+chrome.storage.onChanged.addListener(main);
 
 async function removeLinkClick(e) {
-    if (!port) {
-        port = chrome.runtime.connect();
-        // port.onMessage.addListener(portMsg);
-    }
     // todo: fix reliability when gattId is not available
     // args: address, gattId, origin
     port.postMessage({command: "forgetDevice",
         args: [e.target.id.split("_")[1], e.target.id.split("_")[2], e.target.id.split("_")[3]]});
-
-    // e.target.parent.remove(); // probably not valid
-    // TODO remove site category if empty
     return false;
 }
 
@@ -19,6 +15,8 @@ async function main() {
     let devicelistelem = document.getElementById("devicelist");
 
     let allKeys = await browser.storage.local.get();
+
+    devicelistelem.innerHTML = "";
 
     for (const elem of Object.entries(allKeys)) {
         if (elem[0].startsWith("originDevices_")) {
