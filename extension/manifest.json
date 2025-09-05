@@ -21,7 +21,8 @@
         "gatt-services.js",
         "gatt-characteristics.js",
         "gatt-descriptors.js",
-        "polyfill.js"
+        "polyfill.js",
+        "options.html"
     ],
     "content_scripts": [
         {

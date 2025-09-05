@@ -195,7 +195,7 @@ class DeviceChooserUI {
                     <button id="btn-pair">Pair</button>
                 </div>
                 <div id="footer">
-                    This website will be able to retain access to this device during future page loads. <br /> <br />
+                    This website will be able to retain access to this device for future visits. Access can be revoked in <a href="${chrome.runtime.getURL("options.html")}" target="_blank" id="openOptions">Web Bluetooth Options</a>.<br /> <br />
                     Powered by <a href="https://github.com/stevennyman/web-bluetooth-firefox" target="_blank">Web Bluetooth for Firefox</a>
                 </div>
             </dialog>
@@ -217,6 +217,13 @@ class DeviceChooserUI {
         this.chooserDialog = shadowRoot.getElementById('chooser-dialog');
         this.windows_nobluetooth = shadowRoot.getElementById('windows_nobluetooth');
         this.windows_nobluetooth_ok = shadowRoot.getElementById('windows_nobluetooth_ok');
+
+        this.openOptions = shadowRoot.getElementById('openOptions');
+        this.openOptions.addEventListener('click', e => {
+            port.postMessage({ command: 'openOptions', args: [] });
+            e.preventDefault();
+            return false;
+        });
 
         this.chooserDialog.addEventListener('click', e => e.stopPropagation());
         shadowRoot.getElementById('hostname').innerText = document.location.hostname;

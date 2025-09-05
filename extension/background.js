@@ -744,6 +744,10 @@ async function forgetDevice(port, deviceId, gattId, origin = null) {
     }
 }
 
+function openOptions() {
+    chrome.runtime.openOptionsPage();
+}
+
 const exportedMethods = {
     requestDevice,
     gattConnect,
@@ -771,6 +775,7 @@ const exportedMethods = {
     watchAdvertisements,
     stopAdvertisements,
     forgetDevice,
+    openOptions
 };
 
 chrome.runtime.onConnect.addListener((port) => {
