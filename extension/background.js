@@ -450,10 +450,12 @@ async function gattConnect(port, address) {
     const storageKey = 'originDevices_'+port.sender.origin;
     const currentOriginDevices = (await browser.storage.local.get({ [storageKey]: [] }))[storageKey];
     let alreadyInStorage = false;
+    let needUpdate = false;
     for (let i = 0; i < currentOriginDevices.length; i++) {
         if (currentOriginDevices[i].address === address) {
             alreadyInStorage = true;
             if (!(currentOriginDevices[i].gattId === gattId)) {
+                needUpdate = true;
                 currentOriginDevices[i].gattId = gattId;
             }
         }
@@ -461,8 +463,10 @@ async function gattConnect(port, address) {
     if (!alreadyInStorage) {
         currentOriginDevices.push({ address: address, name: deviceNames[address], gattId: gattId });
     }
-    await browser.storage.local.set({ [storageKey]: currentOriginDevices });
-    port.postMessage({ event: "gattIdUpdateEvent", address: address, gattId: gattId });
+    if (needUpdate) {
+        await browser.storage.local.set({ [storageKey]: currentOriginDevices });
+        port.postMessage({ event: "gattIdUpdateEvent", address: address, gattId: gattId });
+    }
     return gattId;
 }
 
