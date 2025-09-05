@@ -3,11 +3,10 @@
     "description": "Web Bluetooth API Polyfill for Firefox",
     "permissions": [
         "nativeMessaging",
-        "tabs",
-        "activeTab",
         "storage",
-        "http://*/",
-        "https://*/"
+        "https://*/",
+        "http://localhost/*",
+        "http://127.0.0.1/*"
     ],
     "background": {
         "scripts": [
@@ -64,7 +63,8 @@
     "manifest_version": 2,
     "browser_specific_settings": {
         "gecko": {
-          "id": "web-bluetooth-polyfill@ff"
+          "id": "web-bluetooth-polyfill@ff",
+          "strict_min_version": "128.0"
         }
       }
 }
