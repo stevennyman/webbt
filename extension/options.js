@@ -4,10 +4,8 @@ let port = chrome.runtime.connect();
 chrome.storage.onChanged.addListener(main);
 
 async function removeLinkClick(e) {
-    // todo: fix reliability when gattId is not available
-    // args: address, gattId, origin
     port.postMessage({command: "forgetDevice",
-        args: [e.target.id.split("_")[1], e.target.id.split("_")[2], e.target.id.split("_")[3]]});
+        args: [null, e.target.id.split("_")[1], e.target.id.split("_")[2]] });
     return false;
 }
 
@@ -33,7 +31,7 @@ async function main() {
                 devSiteEntr.appendChild(devSiteEntrSpan);
                 let devSiteEntrLink = document.createElement("a");
                 devSiteEntrLink.textContent = "(remove)";
-                devSiteEntrLink.id = "remove_"+elementr.address+"_"+elementr.gattId+"_"+siteName;
+                devSiteEntrLink.id = "remove_"+elementr.webId+"_"+siteName;
                 devSiteEntrLink.href = "#";
                 devSiteEntrLink.onclick = removeLinkClick;
                 devSiteEntr.appendChild(devSiteEntrLink);

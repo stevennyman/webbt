@@ -75,8 +75,8 @@ function nativePortOnMessage(msg) {
         const gattId = msg.device;
         const device = devices[gattId];
         if (device) {
-            device.forEach(port => {
-                port.postMessage({ event: 'disconnectEvent', device: gattId });
+            device.forEach(async port => {
+                port.postMessage({ event: 'disconnectEvent', device: (await gattIdToWebId(gattId, port))});
                 portsObjects.get(port).devices.delete(gattId);
             });
             delete characteristicCache[gattId];
@@ -242,6 +242,87 @@ function matchDeviceFilter(filter, device) {
     return true;
 }
 
+webIdToGattIdMap = {};
+webIdToAddressMap = {};
+
+// caching function for webId to gattId conversions since browser storage access can be a bit slow
+async function webIdToGattId(webId, port = null, origin = null) {
+    if (origin === null) {
+        origin = port.sender.origin;
+    }
+    const storageKey = 'originDevices_'+origin;
+    if (!(origin in webIdToGattIdMap)) {
+        webIdToGattIdMap[origin] = {};
+    }
+    if (webId in webIdToGattIdMap[origin]) { // && webIdToGattIdMap[origin][webId] != null) {
+        return webIdToGattIdMap[origin][webId];
+    } else {
+        const currentOriginDevices = (await browser.storage.local.get({ [storageKey]: [] }))[storageKey];
+        let compl = false;
+        for (const dev of currentOriginDevices) {
+            if (dev.webId === webId) {
+                compl = true;
+                webIdToGattIdMap[origin][webId] = dev.gattId;
+                return dev.gattId;
+            } 
+        }
+        if (!compl) {
+            return null;
+        }
+    }
+}
+
+// caching function for webId to address conversions since browser storage access can be a bit slow
+async function webIdToAddress(webId, port = null, origin = null) {
+    if (origin === null) {
+        origin = port.sender.origin;
+    }
+    const storageKey = 'originDevices_'+origin;
+    if (!(origin in webIdToAddressMap)) {
+        webIdToAddressMap[origin] = {};
+    }
+    if (webId in webIdToAddressMap[origin]) { // && webIdToAddressMap[origin][webId] != null) {
+        return webIdToAddressMap[origin][webId];
+    } else {
+        const currentOriginDevices = (await browser.storage.local.get({ [storageKey]: [] }))[storageKey];
+        let compl = false;
+        for (const dev of currentOriginDevices) {
+            if (dev.webId === webId) {
+                compl = true;
+                webIdToAddressMap[origin][webId] = dev.address;
+                return dev.address;
+            } 
+        }
+        if (!compl) {
+            return null;
+        }
+    }
+}
+
+// TODO: this function (infrequently used) does not cache values and may be slow
+async function gattIdToWebId(gattId, port = null, origin = null) {
+    if (origin === null) {
+        origin = port.sender.origin;
+    }
+    const storageKey = 'originDevices_'+origin;
+    if (!(origin in webIdToAddressMap)) {
+        webIdToAddressMap[origin] = {};
+    }
+
+    const currentOriginDevices = (await browser.storage.local.get({ [storageKey]: [] }))[storageKey];
+    let compl = false;
+    for (const dev of currentOriginDevices) {
+        if (dev.gattId === gattId) {
+            compl = true;
+            // webIdToAddressMap[origin][webId] = dev.address;
+            return dev.webId;
+        } 
+    }
+    if (!compl) {
+        return null;
+    }
+}
+
 async function requestDevice(port, options) {
     if ((!options.filters && !options.acceptAllDevices) || (options.filters && options.acceptAllDevices)) {
         // TODO better filters validation, proper error message
@@ -331,8 +412,12 @@ async function requestDevice(port, options) {
         const storageKey = 'originDevices_'+port.sender.origin;
         const currentOriginDevices = (await browser.storage.local.get({ [storageKey]: [] }))[storageKey];
         let alreadyInStorage = false;
+        const deviceUuids = new Set();
+        let currentWebId;
         for (let i = 0; i < currentOriginDevices.length; i++) {
+            deviceUuids.add(currentOriginDevices[i].webId);
             if (currentOriginDevices[i].address === deviceAddress) {
+                currentWebId = currentOriginDevices[i].webId;
                 alreadyInStorage = true;
                 if (!(currentOriginDevices[i].name === deviceNames[deviceAddress])) {
                     // hopefully this doesn't cause valuable names to be lost
@@ -341,15 +426,23 @@ async function requestDevice(port, options) {
             }
         }
         if (!alreadyInStorage) {
-            currentOriginDevices.push({ address: deviceAddress, name: deviceNames[deviceAddress], gattId: gattId });
+            let desWebId;
+            while (true) {
+                // requires Firefox 95 and secure origin
+                desWebId = crypto.randomUUID();
+                if (!(deviceUuids.has(desWebId))) {
+                    currentWebId = desWebId;
+                    break;
+                }
+            }
+            currentOriginDevices.push({ address: deviceAddress, name: deviceNames[deviceAddress], gattId: gattId, webId: currentWebId });
         }
         await browser.storage.local.set({ [storageKey]: currentOriginDevices });
 
         return {
-            address: deviceAddress,
+            address: currentWebId,
             __rssi: deviceRssi[deviceAddress],
             name: deviceNames[deviceAddress],
-            gattId: gattId,
         };
     } finally {
         stopScanning(port);
@@ -357,7 +450,9 @@ async function requestDevice(port, options) {
     }
 }
 
-async function watchAdvertisements(port, address, gattId) {
+async function watchAdvertisements(port, webId) {
+    let address = await webIdToAddress(webId, port);
+    let gattId = await webIdToGattId(webId, port);
     const storageKey = 'originDevices_'+port.sender.origin;
     const currentOriginDevices = (await browser.storage.local.get({ [storageKey]: [] }))[storageKey];
     let validMatchFound = false;
@@ -377,10 +472,10 @@ async function watchAdvertisements(port, address, gattId) {
     }
 
     if ('dev_'+port+gattId in listenercnts) {
-        listenercnts['dev_'+port+gattId]++;
+        listenercnts['dev_'+port.sender.contextId+gattId]++;
         return;
     } else {
-        listenercnts['dev_'+port+gattId] = 1;
+        listenercnts['dev_'+port.sender.contextId+gattId] = 1;
     }
 
     // TODO: throw InvalidStateError if Bluetooth off
@@ -392,7 +487,7 @@ async function watchAdvertisements(port, address, gattId) {
         msg = structuredClone(msg); // todo: is this necessary?
         if (msg._type === 'scanResult') {
             msg._type = 'adScanResult';
-            msg.subscriptionId = 'scanRequest_'+address;
+            msg.subscriptionId = 'scanRequest_'+webId;
             if (msg.bluetoothAddress === address || msg.gattId === gattId) {
                 if (msg.localName) {
                     deviceName = msg.localName;
@@ -403,12 +498,14 @@ async function watchAdvertisements(port, address, gattId) {
                     msg.serviceData[i].service = normalizeServiceUuid(msg.serviceData[i].service);
                 }
                 deviceRssi = msg.rssi;
+                delete msg['gattId'];
+                msg.address = webId;
                 port.postMessage(msg);
             }
         }
     }
 
-    listeners['dev_'+port+gattId] = scanResultListener;
+    listeners['dev_'+port.sender.contextId+gattId] = scanResultListener;
     nativePort.onMessage.addListener(scanResultListener);
 
     await startScanning(port);
@@ -416,22 +513,24 @@ async function watchAdvertisements(port, address, gattId) {
     return {};
 }
 
-async function stopAdvertisements(port, address, gattId, stopAll = false) {
-    if ('dev_'+port+gattId in listeners) {
-        listenercnts['dev_'+port+gattId]--;
+async function stopAdvertisements(port, webId, stopAll = false) {
+    let gattId = await webIdToGattId(webId, port);
+    if ('dev_'+port.sender.contextId+gattId in listeners) {
+        listenercnts['dev_'+port.sender.contextId+gattId]--;
         if (stopAll) {
-            listenercnts['dev_'+port+gattId] = 0;
+            listenercnts['dev_'+port.sender.contextId+gattId] = 0;
         }
-        if (listenercnts['dev_'+port+gattId] == 0) {
-            nativePort.onMessage.removeListener(listeners['dev_'+port+gattId]);
-            delete listeners['dev_'+port+gattId];
-            delete listenercnts['dev_'+port+gattId];
+        if (listenercnts['dev_'+port.sender.contextId+gattId] == 0) {
+            nativePort.onMessage.removeListener(listeners['dev_'+port.sender.contextId+gattId]);
+            delete listeners['dev_'+port.sender.contextId+gattId];
+            delete listenercnts['dev_'+port.sender.contextId+gattId];
             await stopScanning(port);
         }
     }
 }
 
-async function gattConnect(port, address) {
+async function gattConnect(port, webId) {
+    let address = await webIdToAddress(webId, port);
     /* Security measure: make sure this device address has been
        previously returned by requestDevice() */
     // TODO we also need to save the gattId from below
@@ -440,6 +539,12 @@ async function gattConnect(port, address) {
     }
 
     const gattId = await nativeRequest('connect', { address: address.replace(/:/g, '') }, port);
+    if (gattId != null) {
+        if (!(port.sender.origin in webIdToGattIdMap)) {
+            webIdToGattIdMap[port.sender.origin] = {};
+        }
+        webIdToGattIdMap[port.sender.origin][webId] = gattId;
+    }
     portsObjects.get(port).devices.add(gattId);
     if (!devices[gattId]) {
         devices[gattId] = new Set();
@@ -465,13 +570,17 @@ async function gattConnect(port, address) {
     }
     if (needUpdate) {
         await browser.storage.local.set({ [storageKey]: currentOriginDevices });
-        port.postMessage({ event: "gattIdUpdateEvent", address: address, gattId: gattId });
     }
     return gattId;
 }
 
-async function gattDisconnect(port, gattId) {
-    portsObjects.get(port).devices.delete(gattId);
+async function gattDisconnect(port, webId, gattId = null) {
+    if (gattId === null) {
+        gattId = await webIdToGattId(webId, port);
+    }
+    try {
+        portsObjects.get(port).devices.delete(gattId);
+    } catch {}
     if (gattId in devices) {
         devices[gattId].delete(port);
         if (devices[gattId].size === 0) {
@@ -483,11 +592,12 @@ async function gattDisconnect(port, gattId) {
 
 }
 
-async function getPrimaryService(port, gattId, service) {
-    return (await getPrimaryServices(port, gattId, service))[0];
+async function getPrimaryService(port, webId, service) {
+    return (await getPrimaryServices(port, webId, service))[0];
 }
 
-async function getPrimaryServices(port, gattId, service) {
+async function getPrimaryServices(port, webId, service) {
+    let gattId = await webIdToGattId(webId, port);
     let options = { device: gattId };
     if (service) {
         options.service = windowsServiceUuid(service);
@@ -496,15 +606,16 @@ async function getPrimaryServices(port, gattId, service) {
     return services.map(normalizeServiceUuid);
 }
 
-async function getCharacteristic(port, gattId, service, characteristic) {
-    const char = (await getCharacteristics(port, gattId, service, characteristic)).find(() => true);
+async function getCharacteristic(port, webId, service, characteristic) {
+    const char = (await getCharacteristics(port, webId, service, characteristic)).find(() => true);
     if (!char) {
         throw new Error(`Characteristic ${characteristic} not found`);
     }
     return char;
 }
 
-async function getCharacteristics(port, gattId, service, characteristic) {
+async function getCharacteristics(port, webId, service, characteristic) {
+    let gattId = await webIdToGattId(webId, port);
     if (!characteristicCache[gattId]) {
         characteristicCache[gattId] = {};
     }
@@ -524,7 +635,8 @@ async function getCharacteristics(port, gattId, service, characteristic) {
     }
 }
 
-async function readValue(port, gattId, service, characteristic) {
+async function readValue(port, webId, service, characteristic) {
+    let gattId = await webIdToGattId(webId, port);
     return await nativeRequest('read', {
         device: gattId,
         service: windowsServiceUuid(service),
@@ -532,7 +644,8 @@ async function readValue(port, gattId, service, characteristic) {
     }, port);
 }
 
-async function writeValue(port, gattId, service, characteristic, value) {
+async function writeValue(port, webId, service, characteristic, value) {
+    let gattId = await webIdToGattId(webId, port);
     if (!(value instanceof Array) || !value.every(item => typeof item === 'number')) {
         throw new Error('Invalid argument: value');
     }
@@ -545,7 +658,8 @@ async function writeValue(port, gattId, service, characteristic, value) {
     }, port);
 }
 
-async function writeValueWithResponse(port, gattId, service, characteristic, value) {
+async function writeValueWithResponse(port, webId, service, characteristic, value) {
+    let gattId = await webIdToGattId(webId, port);
     if (!(value instanceof Array) || !value.every(item => typeof item === 'number')) {
         throw new Error('Invalid argument: value');
     }
@@ -558,7 +672,8 @@ async function writeValueWithResponse(port, gattId, service, characteristic, val
     }, port);
 }
 
-async function writeValueWithoutResponse(port, gattId, service, characteristic, value) {
+async function writeValueWithoutResponse(port, webId, service, characteristic, value) {
+    let gattId = await webIdToGattId(webId, port);
     if (!(value instanceof Array) || !value.every(item => typeof item === 'number')) {
         throw new Error('Invalid argument: value');
     }
@@ -571,7 +686,8 @@ async function writeValueWithoutResponse(port, gattId, service, characteristic, 
     }, port);
 }
 
-async function startNotifications(port, gattId, service, characteristic) {
+async function startNotifications(port, webId, service, characteristic) {
+    let gattId = await webIdToGattId(webId, port);
     const subscriptionId = await nativeRequest('subscribe', {
         device: gattId,
         service: windowsServiceUuid(service),
@@ -588,7 +704,8 @@ async function startNotifications(port, gattId, service, characteristic) {
     return subscriptionId;
 }
 
-async function stopNotifications(port, gattId, service, characteristic) {
+async function stopNotifications(port, webId, service, characteristic) {
+    let gattId = await webIdToGattId(webId, port);
     const subscriptionId = await nativeRequest('unsubscribe', {
         device: gattId,
         service: windowsServiceUuid(service),
@@ -634,7 +751,8 @@ async function availability(port) {
     return await nativeRequest('availability', {}, port);
 }
 
-async function getDescriptor(port, gattId, service, characteristic, descriptor) {
+async function getDescriptor(port, webId, service, characteristic, descriptor) {
+    let gattId = await webIdToGattId(webId, port);
     let req = await nativeRequest('getDescriptor', {
         device: gattId,
         service: windowsServiceUuid(service),
@@ -647,7 +765,8 @@ async function getDescriptor(port, gattId, service, characteristic, descriptor) 
     return req;
 }
 
-async function getDescriptors(port, gattId, service, characteristic, descriptor) {
+async function getDescriptors(port, webId, service, characteristic, descriptor) {
+    let gattId = await webIdToGattId(webId, port);
     let req = await nativeRequest('getDescriptors', {
         device: gattId,
         service: windowsServiceUuid(service),
@@ -662,7 +781,8 @@ async function getDescriptors(port, gattId, service, characteristic, descriptor)
     return req;
 }
 
-async function readDescriptorValue(port, gattId, service, characteristic, descriptor) {
+async function readDescriptorValue(port, webId, service, characteristic, descriptor) {
+    let gattId = await webIdToGattId(webId, port);
     let req = await nativeRequest('readDescriptorValue', {
         device: gattId,
         service: windowsServiceUuid(service),
@@ -675,7 +795,8 @@ async function readDescriptorValue(port, gattId, service, characteristic, descri
     return req;
 }
 
-async function writeDescriptorValue(port, gattId, service, characteristic, descriptor, value) {
+async function writeDescriptorValue(port, webId, service, characteristic, descriptor, value) {
+    let gattId = await webIdToGattId(webId, port);
     let req = await nativeRequest('writeDescriptorValue', {
         device: gattId,
         service: windowsServiceUuid(service),
@@ -695,17 +816,18 @@ async function getOriginDevices(port) {
     const result = new Set();
 
     for (const originDev of currentOriginDevices) {
-        result.add(originDev);
+        result.add({address: originDev.webId, name: originDev.name});
     }
     return result;
 }
 
-async function forgetDevice(port, deviceId, gattId, origin = null) {
+async function forgetDevice(port, webId, origin = null) {
     const desiredOrigin = (origin ?? port.sender.origin);
+    let address = await webIdToAddress(webId, null, desiredOrigin);
     const storageKey = 'originDevices_'+desiredOrigin;
     const currentOriginDevices = (await browser.storage.local.get({ [storageKey]: [] }))[storageKey];
         for (let i = 0; i < currentOriginDevices.length; i++) {
-        if (currentOriginDevices[i].address === deviceId) {
+        if (currentOriginDevices[i].address === address) {
             currentOriginDevices.splice(i, 1);
             i--;
         }
@@ -718,26 +840,26 @@ async function forgetDevice(port, deviceId, gattId, origin = null) {
         console.log(portObj[0]);
         if (portObj[0].sender.origin === desiredOrigin) {
             // gattDisconnect removes from devices and disconnects
-            await gattDisconnect(portObj[0], deviceId);
+            await gattDisconnect(portObj[0], webId);
             console.log(portObj[1]);
-            portObj[1].knownDeviceIds.delete(deviceId);
+            portObj[1].knownDeviceIds.delete(address);
 
             // TODO check this
             const devIdNames = portObj[1].deviceIdNames;
-            delete devIdNames[deviceId];
+            delete devIdNames[address];
         }
     }
 
     // also remove from subscriptions
-    if (desiredOrigin in subscriptionOrigins && deviceId in subscriptionOrigins[desiredOrigin]) {
-        const subList = subscriptionOrigins[desiredOrigin][deviceId];
+    if (desiredOrigin in subscriptionOrigins && address in subscriptionOrigins[desiredOrigin]) {
+        const subList = subscriptionOrigins[desiredOrigin][address];
         for (const elem of subList) {
-            await stopNotifications(elem[2], deviceId, elem[0], elem[1]);
+            await stopNotifications(elem[2], webId, elem[0], elem[1]);
         }
     }
 
     // also stop advertisements
-    await stopAdvertisements(port, deviceId, gattId, true);    
+    await stopAdvertisements(port, webId, true);    
 
     // TODO refactor connection to primarily use gatt IDs?
 
