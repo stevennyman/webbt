@@ -1,3 +1,7 @@
+<p align="center">
+    <img src="extension/logo.svg" alt="WebBT for Firefox Logo" width="120"/>
+</p>
+
 # WebBT for Firefox
 
 This extension enables Web Bluetooth in Firefox on Windows 10 and Windows 11. See [Credits](#credits) for details about the history of this repository including the origin of this fork.

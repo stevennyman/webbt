@@ -3,6 +3,12 @@
     "description": "Web Bluetooth API Polyfill for Firefox",
     "author": "Steven Nyman",
     "homepage_url": "https://github.com/stevennyman/webbt",
+    "icons": {
+        "16": "logo.svg",
+        "32": "logo.svg",
+        "64": "logo.svg",
+        "128": "logo.svg"
+    },
     "permissions": [
         "nativeMessaging",
         "storage",
