@@ -36,7 +36,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Messages]
 SetupAppRunningError=Setup has detected that %1 is currently running in Firefox.%n%nPlease close any pages in Firefox that use Web Bluetooth. Then, click OK to continue, or Cancel to exit.
-UninstallAppRunningError=Uninstall has detected that %1 is currently running in Firefox.%n%Please close any pages in Firefox that use Web Bluetooth. Then, click OK to continue uninstalling %1, or Cancel to exit.
+UninstallAppRunningError=Uninstall has detected that %1 is currently running in Firefox.%n%nPlease close any pages in Firefox that use Web Bluetooth. Then, click OK to continue uninstalling %1, or Cancel to exit.
 
 [Registry]
 Root: HKA; Subkey: "SOFTWARE\Mozilla\NativeMessagingHosts\webbt.server"; Flags: uninsdeletekey

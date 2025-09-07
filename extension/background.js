@@ -49,6 +49,10 @@ async function nativeRequest(cmd, params, port) {
         } catch (e) {
             if (nativePort.error.message.startsWith("No such native application ")) {
                 await openOrFocusInfoTab();
+                port.postMessage({ _type: 'hideDeviceChooser' });
+                reject("WebBT server not installed. https://github.com/stevennyman/webbt/releases/latest");
+            } else {
+                reject(e);
             }
         }
 
@@ -68,13 +72,14 @@ function nativePortOnMessage(msg) {
             for (const reqId in requests) {
                 delete commandPorts[reqId];
                 const { reject, resolve } = requests[reqId];
-                reject('Unsupported host version');
+                reject('Unsupported WebBT server version. https://github.com/stevennyman/webbt/releases/latest');
                 delete requests[reqId];
             }
             requests = {};
             commandPorts = {};
-            console.log('Unsupported host version!');
+            console.log('Unsupported WebBT server version. https://github.com/stevennyman/webbt/releases/latest');
             openOrFocusInfoTab();
+            port.postMessage({ _type: 'hideDeviceChooser' });
         }
     }
     if (msg.pairingType && commandPorts[msg._id]) {
@@ -409,8 +414,8 @@ async function requestDevice(port, options) {
     } catch (error) {
         if (error == 'The device is not ready for use.\r\n\r\nThe device is not ready for use.\r\n') {
             port.postMessage({ _type: 'deviceChooserWinError' });
-            throw error;
         }
+        throw error;
     }
     try {
         const deviceInfo = await new Promise((resolve, reject) => {
@@ -562,7 +567,6 @@ async function gattConnect(port, webId) {
     let address = await webIdToAddress(webId, port);
     /* Security measure: make sure this device address has been
        previously returned by requestDevice() */
-    // TODO we also need to save the gattId from below
     if (!portsObjects.get(port).knownDeviceIds.has(address)) {
         throw new Error('Unknown device address');
     }

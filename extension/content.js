@@ -24,6 +24,13 @@ function portMsg(message) {
         return;
     }
 
+    if (message._type === 'hideDeviceChooser') {
+        if (chooserUI) {
+            chooserUI.hide();
+        }
+        return;
+    }
+
     if (message._type === 'deviceChooserWinError') {
         if (chooserUI) {
             chooserUI.winError();
