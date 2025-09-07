@@ -986,7 +986,12 @@ int main(Array<String^>^ args) {
 
 	JsonObject^ msg = ref new JsonObject();
 	msg->Insert("_type", JsonValue::CreateStringValue("Start"));
+	// API version is required and will be incremented when breaking changes are made to the API
 	msg->Insert("apiVersion", JsonValue::CreateNumberValue(API_VERSION));
+	// the following two values are not currently validated but may be used in the future to determine whether to offer users an update to BLEServer
+	// third-party server implementations should change these values for their servers
+	msg->Insert("serverName", JsonValue::CreateStringValue("bleserver-win-cppcx"));
+	msg->Insert("serverVersion", JsonValue::CreateStringValue("0.5.0"));
 	writeObject(msg);
 
 	// Set STDIN / STDOUT to binary mode
