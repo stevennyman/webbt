@@ -2,7 +2,7 @@
 
 SUPPORTED_HOST_API_VERSION = 1;
 
-let debugPrints = true;
+let debugPrints = false;
 
 let requestId = 0;
 let requests = {};
