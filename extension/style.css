@@ -10,7 +10,12 @@ h3 {
     margin-bottom: 1px;
 }
 h4 {
-    margin-top: 0px
+    margin-top: 10px;
+    margin-bottom: 1px;
+}
+h5 {
+    margin-top: 10px;
+    margin-bottom: 1px;
 }
 body {
     font: caption;

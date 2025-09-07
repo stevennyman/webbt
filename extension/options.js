@@ -1,3 +1,5 @@
+document.getElementById("versionnumber").textContent = browser.runtime.getManifest().version;
+
 let port = chrome.runtime.connect();
 
 // todo: don't redraw entire DOM when options changed since this doesn't scale
