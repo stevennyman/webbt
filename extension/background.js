@@ -14,8 +14,27 @@ let nativePort = null;
 let listeners = {};
 let listenercnts = {};
 
+const COOLDOWN_MS = 30* 1000;
+let lastInfoTab = 0;
+let infoTabId = null;
+
+async function openOrFocusInfoTab() {
+    if (Date.now() - lastInfoTab < COOLDOWN_MS) return;
+    lastInfoTab = Date.now();
+    if (infoTabId != null) {
+        try {
+            await browser.tabs.update(infoTabId, { active: true });
+        } catch (e) {
+            infoTabId = (await browser.tabs.create({ url: "/installation.html" })).id;
+        }
+    } else {
+        infoTabId = (await browser.tabs.create({ url: "/installation.html" })).id;
+    }
+}
+
+
 async function nativeRequest(cmd, params, port) {
-    return new Promise((resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
         requests[requestId] = { resolve, reject };
         commandPorts[requestId] = port;
         const msg = Object.assign(params || {}, {
@@ -25,7 +44,14 @@ async function nativeRequest(cmd, params, port) {
         if (debugPrints) {
             console.log('Sent native message:', msg);
         }
-        nativePort.postMessage(msg);
+        try {
+            nativePort.postMessage(msg);
+        } catch (e) {
+            if (nativePort.error.message.startsWith("No such native application ")) {
+                await openOrFocusInfoTab();
+            }
+        }
+
     });
 }
 
@@ -48,6 +74,7 @@ function nativePortOnMessage(msg) {
             requests = {};
             commandPorts = {};
             console.log('Unsupported host version!');
+            openOrFocusInfoTab();
         }
     }
     if (msg.pairingType && commandPorts[msg._id]) {
@@ -85,12 +112,14 @@ function nativePortOnMessage(msg) {
     }
 }
 
+browser.browserAction.onClicked.addListener((e) => browser.runtime.openOptionsPage());
+
 const portsObjects = new Map();
 const subscriptionOrigins = {};
 const characteristicCache = {};
 
-function nativePortOnDisconnect() {
-    console.log('Disconnected!', chrome.runtime.lastError.message);
+function nativePortOnDisconnect(port) {
+    console.log('Disconnected!', port.error);
 }
 
 function leftPad(s, count, pad) {
@@ -917,7 +946,7 @@ chrome.runtime.onConnect.addListener((port) => {
     });
 
     if (nativePort === null) {
-        nativePort = chrome.runtime.connectNative('web_bluetooth.server');
+        nativePort = chrome.runtime.connectNative('webbt.server');
     }
 
     nativePort.onMessage.addListener(nativePortOnMessage);

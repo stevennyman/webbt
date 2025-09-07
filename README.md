@@ -1,4 +1,4 @@
-# Web Bluetooth for Firefox
+# WebBT for Firefox
 
 The Polyfill extension enables Web Bluetooth in Firefox on Windows 10 and Windows 11. See [Credits](#credits) for details about the history of this repository including the origin of this fork.
 
@@ -8,7 +8,7 @@ The Polyfill extension enables Web Bluetooth in Firefox on Windows 10 and Window
     * Note: reading `txPower` requires Windows 10 version 2004 (build 19041) or newer.
 2. Run the provided installer (coming soon)
 
-That's it! Enjoy Web Bluetooth on Windows :-)
+That's it! Enjoy Web Bluetooth in Firefox :-)
 
 ## Developing
 

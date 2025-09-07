@@ -1,6 +1,8 @@
 {
-    "name": "Web Bluetooth for Firefox",
+    "name": "WebBT",
     "description": "Web Bluetooth API Polyfill for Firefox",
+    "author": "Steven Nyman",
+    "homepage_url": "https://github.com/stevennyman/webbt",
     "permissions": [
         "nativeMessaging",
         "storage",
@@ -54,7 +56,7 @@
         }
     ],
     "browser_action": {
-        "default_title": "Web Bluetooth for Firefox"
+        "default_title": "WebBT"
     },
     "options_ui": {
         "page": "options.html"
@@ -63,7 +65,7 @@
     "manifest_version": 2,
     "browser_specific_settings": {
         "gecko": {
-          "id": "web-bluetooth-polyfill@ff",
+          "id": "webbt@ff",
           "strict_min_version": "128.0"
         }
       }

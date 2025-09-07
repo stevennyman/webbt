@@ -1,5 +1,5 @@
 {
-  "name": "web-bluetooth-polyfill",
+  "name": "webbt",
   "version": "0.5.0",
   "description": "Web Bluetooth Polyfill",
   "main": "background.js",
@@ -11,7 +11,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/urish/web-bluetooth-polyfill.git"
+    "url": "git+https://github.com/stevennyman/webbt.git"
   },
   "keywords": [
     "web",
@@ -20,9 +20,9 @@
   "author": "Steven Nyman",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/urish/web-bluetooth-polyfill/issues"
+    "url": "https://github.com/stevennyman/webbt/issues"
   },
-  "homepage": "https://github.com/urish/web-bluetooth-polyfill#readme",
+  "homepage": "https://github.com/stevennyman/webbt#readme",
   "devDependencies": {
     "eslint": "^4.18.2",
     "event-target-shim": "^2.0.0",

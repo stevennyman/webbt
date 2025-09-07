@@ -196,7 +196,7 @@ class DeviceChooserUI {
                 </div>
                 <div id="footer">
                     This website will be able to retain access to this device for future visits. Access can be revoked in <a href="${chrome.runtime.getURL("options.html")}" target="_blank" id="openOptions">Web Bluetooth Options</a>.<br /> <br />
-                    Powered by <a href="https://github.com/stevennyman/web-bluetooth-firefox" target="_blank">Web Bluetooth for Firefox</a>
+                    Powered by <a href="https://github.com/stevennyman/webbt" target="_blank">WebBT for Firefox</a>
                 </div>
             </dialog>
 

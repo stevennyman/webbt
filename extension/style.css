@@ -6,11 +6,15 @@ h2 {
     margin-bottom: 3px;
 }
 h3 {
-    margin-top: 0px;
+    margin-top: 10px;
     margin-bottom: 1px;
 }
 h4 {
     margin-top: 0px
+}
+body {
+    font: caption;
+    font-size: medium;
 }
 @media (prefers-color-scheme: dark) {
     body {

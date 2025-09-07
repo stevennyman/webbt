@@ -2,7 +2,7 @@
 
 if (!navigator.bluetooth) {
     // eslint-disable-next-line no-console
-    console.log('Web Bluetooth Polyfill loaded');
+    console.log('WebBT loaded');
 
     (function () {
         let hostVersionErrorShown = false;
@@ -36,7 +36,7 @@ if (!navigator.bluetooth) {
                 // TODO improve this experience
                 if (event.data.error === 'Unsupported host version' && !hostVersionErrorShown) {
                     hostVersionErrorShown = true;
-                    alert("Web Bluetooth for Firefox: Unsupported host version installed, please install the latest correct version.");
+                    console.log("WebBT: Unsupported host version installed, please install the latest correct version.");
                 }
                 const request = outstandingRequests[event.data.id];
                 if (request) {
