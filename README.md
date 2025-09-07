@@ -1,21 +1,14 @@
 # WebBT for Firefox
 
-The Polyfill extension enables Web Bluetooth in Firefox on Windows 10 and Windows 11. See [Credits](#credits) for details about the history of this repository including the origin of this fork.
+This extension enables Web Bluetooth in Firefox on Windows 10 and Windows 11. See [Credits](#credits) for details about the history of this repository including the origin of this fork.
 
 ## Installation
 
 1. You need to have Windows 10 Creators Update (version 1703 / build 15063) or newer, and Firefox 128 or newer.
     * Note: reading `txPower` requires Windows 10 version 2004 (build 19041) or newer.
-2. Run the provided installer (coming soon)
+2. Install [the WebBT Firefox extension](https://addons.mozilla.org/firefox/addon/webbt/) and run the provided [WebBT server installer](https://github.com/stevennyman/webbt/releases/latest).
 
 That's it! Enjoy Web Bluetooth in Firefox :-)
-
-## Developing
-
-1. Open the Visual Studio solution and compile the project.
-2. Open the Inno Setup (`.iss`) file and compile and run the installer.
-3. Install the extension into Firefox using `about:debugging`.
-4. (Optional) Names for GATT characteristics, descriptors, and services can be updated/synchronized with the Bluetooth SIG assigned numbers by updating the `Bluetooth_SIG_UUIDs` submodule then running `update_uuids.py`.
 
 ## Troubleshooting
 
@@ -29,11 +22,7 @@ That's it! Enjoy Web Bluetooth in Firefox :-)
 
 ## Current State
 
-Currently WIP, with work being done to improve the UI as well as the persistent device pairing system. As such a compiled release is not yet available.
-
-Currently Windows-only.
-
-TL;DR - Should work out of the box with most Web Bluetooth apps.
+TL;DR - Should work out of the box with most Web Bluetooth apps. Currently Windows-only.
 
 Most of the functionality is already there, but there might be slight differences between the current implementation and the spec.
 
@@ -62,7 +51,23 @@ List of API methods / events and their implementation status:
 - [X] getDescriptor / getDescriptors ([#6 on original repo](https://github.com/urish/web-bluetooth-polyfill/issues/6))
 - [X] descriptor readValue
 - [X] descriptor writeValue
+- [ ] requestLEScan
+- [ ] availabilityChanged event
+- [ ] referringDevice ?
+- [ ] watchingAdvertisements property
 - [ ] TODO add additional entries for this list
+
+## Future Work
+- Rewrite BLEServer to enable cross-platform usage, possibly using Rust and the Bluest library
+- Implement all remaining APIs
+- Add timeout/page hide event to scanning and other operations as needed
+
+## Developing
+
+1. Open the Visual Studio solution and compile the project.
+2. Open the Inno Setup (`.iss`) file and compile and run the installer.
+3. Install the extension into Firefox using `about:debugging`.
+4. (Optional) Names for GATT characteristics, descriptors, and services can be updated/synchronized with the Bluetooth SIG assigned numbers by updating the `Bluetooth_SIG_UUIDs` submodule then running `update_uuids.py`.
 
 ## Credits
 
