@@ -28,7 +28,8 @@ SolidCompression=yes
 WizardStyle=modern
 AppMutex=BLEServer
 UninstallDisplayName={#MyAppName}
-MinVersion=10.0.15063 
+MinVersion=10.0.15063
+SetupIconFile=..\BLEServer\logo.ico 
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
