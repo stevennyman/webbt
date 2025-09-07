@@ -14,6 +14,13 @@ function disconnectport() {
 window.addEventListener('pagehide', disconnectport);
 
 function portMsg(message) {
+    if (message.error === 'Unsupported WebBT server version. Extension or server update required. https://github.com/stevennyman/webbt/releases/latest') {
+        if (chooserUI) {
+            chooserUI.hide();
+        }
+        // do not return here
+    }
+
     if (message._type === 'showDeviceChooser') {
         if (!chooserUI) {
             chooserUI = new DeviceChooserUI();

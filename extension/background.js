@@ -72,14 +72,13 @@ function nativePortOnMessage(msg) {
             for (const reqId in requests) {
                 delete commandPorts[reqId];
                 const { reject, resolve } = requests[reqId];
-                reject('Unsupported WebBT server version. https://github.com/stevennyman/webbt/releases/latest');
+                reject('Unsupported WebBT server version. Extension or server update required. https://github.com/stevennyman/webbt/releases/latest');
                 delete requests[reqId];
             }
             requests = {};
             commandPorts = {};
-            console.log('Unsupported WebBT server version. https://github.com/stevennyman/webbt/releases/latest');
+            console.log('Unsupported WebBT server version. Extension or server update required. https://github.com/stevennyman/webbt/releases/latest');
             openOrFocusInfoTab();
-            port.postMessage({ _type: 'hideDeviceChooser' });
         }
     }
     if (msg.pairingType && commandPorts[msg._id]) {
