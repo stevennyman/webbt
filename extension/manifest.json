@@ -71,8 +71,11 @@
     "manifest_version": 2,
     "browser_specific_settings": {
         "gecko": {
-          "id": "webbt@ff",
-          "strict_min_version": "128.0"
+            "id": "webbt@ff",
+            "strict_min_version": "128.0",
+            "data_collection_permissions": {
+                "required": ["none"]
+            }
         }
       }
 }
