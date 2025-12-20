@@ -18,6 +18,9 @@ const COOLDOWN_MS = 30* 1000;
 let lastInfoTab = 0;
 let infoTabId = null;
 
+let nativeResolve = null;
+let nativeReady = null;
+
 async function openOrFocusInfoTab() {
     if (Date.now() - lastInfoTab < COOLDOWN_MS) return;
     lastInfoTab = Date.now();
@@ -41,13 +44,23 @@ async function nativeRequest(cmd, params, port) {
             cmd,
             _id: requestId++,
         });
+        if (cmd != 'ping') {
+            await nativeReady;
+            if (debugPrints) {
+                console.log("nativeReady complete")
+            }
+        }
         if (debugPrints) {
             console.log('Sent native message:', msg);
         }
         try {
             nativePort.postMessage(msg);
         } catch (e) {
-            if (nativePort.error.message.startsWith("No such native application ")) {
+            if (debugPrints) {
+                console.log(e);
+            }
+            nativeResolve();
+            if (nativePort.error && nativePort.error.message.startsWith("No such native application ")) {
                 await openOrFocusInfoTab();
                 port.postMessage({ _type: 'hideDeviceChooser' });
                 reject("WebBT server not installed. https://github.com/stevennyman/webbt/releases/latest");
@@ -63,6 +76,7 @@ const subscriptions = {};
 const devices = {};
 
 function nativePortOnMessage(msg) {
+    nativeResolve();
     if (debugPrints) {
         console.log('Received native message:', msg);
     }
@@ -123,6 +137,7 @@ const subscriptionOrigins = {};
 const characteristicCache = {};
 
 function nativePortOnDisconnect(port) {
+    nativeResolve();
     console.log('Disconnected!', port.error);
 }
 
@@ -949,11 +964,14 @@ chrome.runtime.onConnect.addListener((port) => {
     });
 
     if (nativePort === null) {
+        nativeReady = new Promise((resolve) => {
+            nativeResolve = resolve;
+        })
         nativePort = chrome.runtime.connectNative('webbt.server');
+        nativePort.onDisconnect.addListener(nativePortOnDisconnect);
+        nativePort.onMessage.addListener(nativePortOnMessage);
     }
 
-    nativePort.onMessage.addListener(nativePortOnMessage);
-    nativePort.onDisconnect.addListener(nativePortOnDisconnect);
 
     nativeRequest('ping', {}, port).then(() => {
         console.log('Connected to server');
