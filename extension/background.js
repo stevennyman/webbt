@@ -918,6 +918,22 @@ async function forgetDevice(port, webId, origin = null) {
 
     // TODO refactor connection to primarily use gatt IDs?
 
+    if (desiredOrigin in webIdToGattIdMap) {
+        for (possibleAddress of Object.entries(webIdToGattIdMap[desiredOrigin])) {
+            if (possibleAddress[1].endsWith(address)) {
+                delete webIdToGattIdMap[desiredOrigin][possibleAddress[0]]
+            }
+        }
+    }
+
+    if (desiredOrigin in webIdToAddressMap) {
+        for (possibleAddress of Object.entries(webIdToAddressMap[desiredOrigin])) {
+            if (possibleAddress[1] == address) {
+                delete webIdToAddressMap[desiredOrigin][possibleAddress[0]]
+            }
+        }
+    }
+
     if (currentOriginDevices.length === 0) {
         await browser.storage.local.remove(storageKey);
     } else {
