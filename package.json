@@ -1,6 +1,6 @@
 {
   "name": "webbt",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Web Bluetooth Polyfill",
   "main": "background.js",
   "scripts": {
