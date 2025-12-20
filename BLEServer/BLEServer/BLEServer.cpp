@@ -322,13 +322,14 @@ concurrency::task<IJsonValue^> pairRequest(JsonObject^ command) {
 	Bluetooth::BluetoothLEDevice^ device = devices->Lookup(command->GetNamedString("device"));
 	// Pair the device if needed
 	if (device->DeviceInformation->Pairing->CanPair && !(device->DeviceInformation->Pairing->IsPaired)) {
-		Enumeration::DevicePairingKinds supportedCeremonies = supportedCeremonies | Enumeration::DevicePairingKinds::ConfirmOnly;
+		Enumeration::DevicePairingKinds supportedCeremonies = Enumeration::DevicePairingKinds::ConfirmOnly;
 		supportedCeremonies = supportedCeremonies | Enumeration::DevicePairingKinds::DisplayPin;
 		supportedCeremonies = supportedCeremonies | Enumeration::DevicePairingKinds::ProvidePin;
-		supportedCeremonies = supportedCeremonies | Enumeration::DevicePairingKinds::ConfirmOnly;
+		supportedCeremonies = supportedCeremonies | Enumeration::DevicePairingKinds::ConfirmPinMatch;
 		supportedCeremonies = supportedCeremonies | Enumeration::DevicePairingKinds::ProvidePasswordCredential;
 		auto commandId = command->GetNamedNumber("_id");
-		device->DeviceInformation->Pairing->Custom->PairingRequested +=
+		auto customPairing = device->DeviceInformation->Pairing->Custom;
+		customPairing->PairingRequested +=
 			ref new Windows::Foundation::TypedEventHandler<Windows::Devices::Enumeration::DeviceInformationCustomPairing^,
 			Windows::Devices::Enumeration::DevicePairingRequestedEventArgs^>(
 				[commandId](Enumeration::DeviceInformationCustomPairing^ customPairing, Enumeration::DevicePairingRequestedEventArgs^ pairRequestArgs) {
@@ -389,7 +390,7 @@ concurrency::task<IJsonValue^> pairRequest(JsonObject^ command) {
 
 					deferral->Complete();
 				});
-		auto pair_status = co_await device->DeviceInformation->Pairing->Custom->PairAsync(supportedCeremonies);
+		auto pair_status = co_await customPairing->PairAsync(supportedCeremonies);
 		// RejectedByHandler is raised in cases of cancellation
 		if (pair_status->Status != Enumeration::DevicePairingResultStatus::Paired
 			&& pair_status->Status != Enumeration::DevicePairingResultStatus::AlreadyPaired

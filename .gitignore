@@ -3,3 +3,6 @@ coverage
 output
 yarn.lock
 package-lock.json
+.vs
+images
+extension/releases
