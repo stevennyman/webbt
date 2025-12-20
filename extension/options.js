@@ -7,7 +7,7 @@ chrome.storage.onChanged.addListener(main);
 
 async function removeLinkClick(e) {
     port.postMessage({command: "forgetDevice",
-        args: [null, e.target.id.split("_")[1], e.target.id.split("_")[2]] });
+        args: [e.target.id.split("_")[1], e.target.id.split("_")[2]] });
     return false;
 }
 
