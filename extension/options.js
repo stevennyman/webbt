@@ -1,13 +1,13 @@
 document.getElementById("versionnumber").textContent = browser.runtime.getManifest().version;
 
-let port = chrome.runtime.connect();
-
 // todo: don't redraw entire DOM when options changed since this doesn't scale
 chrome.storage.onChanged.addListener(main);
 
 async function removeLinkClick(e) {
+    let port = chrome.runtime.connect();
     port.postMessage({command: "forgetDevice",
         args: [e.target.id.split("_")[1], e.target.id.split("_")[2]] });
+    port.disconnect();
     return false;
 }
 

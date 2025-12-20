@@ -23,6 +23,7 @@ let nativeReady = null;
 
 async function openOrFocusInfoTab() {
     if (Date.now() - lastInfoTab < COOLDOWN_MS) return;
+    if ((await browser.storage.local.get("hideInstallation")).hideInstallation) return;
     lastInfoTab = Date.now();
     if (infoTabId != null) {
         try {
@@ -202,7 +203,7 @@ async function startScanning(port) {
 function stopScanning(port) {
     scanningCounter--;
     portsObjects.get(port).scanCount--;
-    if (!scanningCounter) {
+    if (!scanningCounter && nativePort && !(nativePort.error)) {
         nativeRequest('stopScan', {}, port);
     }
 }
@@ -633,7 +634,9 @@ async function gattDisconnect(port, webId, gattId = null) {
         if (devices[gattId].size === 0) {
             delete characteristicCache[gattId];
             delete devices[gattId];
-            return await nativeRequest('disconnect', { device: gattId }, port);
+            if (nativePort && !(nativePort.error)) {
+                return await nativeRequest('disconnect', { device: gattId }, port);
+            }
         }
     }
 
@@ -753,11 +756,14 @@ async function startNotifications(port, webId, service, characteristic) {
 
 async function stopNotifications(port, webId, service, characteristic) {
     let gattId = await webIdToGattId(webId, port);
-    const subscriptionId = await nativeRequest('unsubscribe', {
-        device: gattId,
-        service: windowsServiceUuid(service),
-        characteristic: windowsCharacteristicUuid(characteristic),
-    }, port);
+    let subscriptionId;
+    if (nativePort && !(nativePort.error)) {
+        subscriptionId = await nativeRequest('unsubscribe', {
+            device: gattId,
+            service: windowsServiceUuid(service),
+            characteristic: windowsCharacteristicUuid(characteristic),
+        }, port);
+    }
 
     subscriptions[subscriptionId].delete(port);
     if (!subscriptions[subscriptionId].size) {
@@ -884,11 +890,9 @@ async function forgetDevice(port, webId, origin = null) {
     }
     // this needs to affect all connections to a given domain name
     for (const portObj of portsObjects) {
-        console.log(portObj[0]);
         if (portObj[0].sender.origin === desiredOrigin) {
             // gattDisconnect removes from devices and disconnects
             await gattDisconnect(portObj[0], webId);
-            console.log(portObj[1]);
             portObj[1].knownDeviceIds.delete(address);
 
             // TODO check this
@@ -898,10 +902,14 @@ async function forgetDevice(port, webId, origin = null) {
     }
 
     // also remove from subscriptions
-    if (desiredOrigin in subscriptionOrigins && address in subscriptionOrigins[desiredOrigin]) {
-        const subList = subscriptionOrigins[desiredOrigin][address];
-        for (const elem of subList) {
-            await stopNotifications(elem[2], webId, elem[0], elem[1]);
+    if (desiredOrigin in subscriptionOrigins) {
+        for (possibleAddress of Object.keys(subscriptionOrigins[desiredOrigin])) {
+            if (possibleAddress.endsWith(address)) {
+                const subList = subscriptionOrigins[desiredOrigin][possibleAddress];
+                for (const elem of subList) {
+                    await stopNotifications(elem[2], webId, elem[0], elem[1]);
+                }
+            }
         }
     }
 
@@ -952,7 +960,6 @@ const exportedMethods = {
 };
 
 chrome.runtime.onConnect.addListener((port) => {
-    activePorts++;
 
     portsObjects.set(port, {
         scanCount: 0,
@@ -963,19 +970,23 @@ chrome.runtime.onConnect.addListener((port) => {
         deviceIdNames: new Map(),
     });
 
-    if (nativePort === null) {
-        nativeReady = new Promise((resolve) => {
-            nativeResolve = resolve;
-        })
-        nativePort = chrome.runtime.connectNative('webbt.server');
-        nativePort.onDisconnect.addListener(nativePortOnDisconnect);
-        nativePort.onMessage.addListener(nativePortOnMessage);
+    if (port.sender.url != browser.runtime.getURL("options.html")) {
+        activePorts++;
+
+        if (nativePort === null) {
+            nativeReady = new Promise((resolve) => {
+                nativeResolve = resolve;
+            })
+            nativePort = chrome.runtime.connectNative('webbt.server');
+            nativePort.onDisconnect.addListener(nativePortOnDisconnect);
+            nativePort.onMessage.addListener(nativePortOnMessage);
+        }
+
+
+        nativeRequest('ping', {}, port).then(() => {
+            console.log('Connected to server');
+        });
     }
-
-
-    nativeRequest('ping', {}, port).then(() => {
-        console.log('Connected to server');
-    });
 
     port.onDisconnect.addListener(() => {
         for (let gattDevice of portsObjects.get(port).devices.values()) {
@@ -989,10 +1000,12 @@ chrome.runtime.onConnect.addListener((port) => {
         }
 
         // close the dedicated host process if nothing else is using it
-        activePorts--;
-        if (!activePorts) {
-            nativePort.disconnect();
-            nativePort = null;
+        if (port.sender.url != browser.runtime.getURL("options.html")) {
+            activePorts--;
+            if (!activePorts) {
+                nativePort.disconnect();
+                nativePort = null;
+            }
         }
 
         // this approximates the previous WeakMap usage for portsObjects
