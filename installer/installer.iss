@@ -24,12 +24,20 @@ PrivilegesRequiredOverridesAllowed=dialog
 OutputDir=output
 OutputBaseFilename=InstallWebBTServerForFirefox-{#MyAppVersion}
 Compression=lzma
-SolidCompression=yes
-WizardStyle=modern
+SolidCompression=no
+WizardStyle=modern dynamic
 AppMutex=BLEServer
 UninstallDisplayName={#MyAppName}
 MinVersion=10.0.15063
-SetupIconFile=..\BLEServer\logo.ico 
+SetupIconFile=..\BLEServer\logo.ico
+ArchitecturesInstallIn64BitMode=x64compatible or arm64
+UninstallDisplayIcon={app}\BLEServer.exe
+; The following metadata is only shown when uninstalling through Control Panel > Programs and Features, not in the Settings app
+AppPublisherURL="https://addons.mozilla.org/en-US/firefox/addon/webbt/"
+AppSupportURL="https://github.com/stevennyman/webbt/discussions"
+AppUpdatesURL="https://github.com/stevennyman/webbt/releases"
+AppComments="This application is required by the WebBT Firefox extension, which brings Web Bluetooth support to Firefox. Users do not typically launch this application directly; it is launched by Firefox as needed."
+
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -39,11 +47,17 @@ SetupAppRunningError=Setup has detected that %1 is currently running in Firefox.
 UninstallAppRunningError=Uninstall has detected that %1 is currently running in Firefox.%n%nPlease close any pages in Firefox that use Web Bluetooth. Then, click OK to continue uninstalling %1, or Cancel to exit.
 
 [Registry]
+; Firefox checks the user node, then 32 bit system node, then native system node
+; https://searchfox.org/firefox-main/source/toolkit/components/extensions/NativeManifests.sys.mjs
+; https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Native_manifests#windows
+; A per-user installation is always installed to the native view
 Root: HKA; Subkey: "SOFTWARE\Mozilla\NativeMessagingHosts\webbt.server"; Flags: uninsdeletekey
 Root: HKA; Subkey: "SOFTWARE\Mozilla\NativeMessagingHosts\webbt.server"; ValueType: string; ValueData: "{app}\manifest.json"
 
 [Files]
-Source: "..\BLEServer\Release\BLEServer.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\BLEServer\ARM64\Release\BLEServer.exe"; DestDir: "{app}"; Check: PreferArm64Files; Flags: ignoreversion
+Source: "..\BLEServer\x64\Release\BLEServer.exe"; DestDir: "{app}"; Check: PreferX64Files; Flags: ignoreversion
+Source: "..\BLEServer\Release\BLEServer.exe"; DestDir: "{app}"; Check: PreferX86Files; Flags: ignoreversion
 Source: "manifest.json"; DestDir: "{app}"; Flags: ignoreversion
 
 [Code]
@@ -51,8 +65,31 @@ var
   DownloadPage: TDownloadWizardPage;
   DepLoc: Boolean;
   DepLoc2: Boolean;
+  DepUrl: String;
   NeedsVcc: Boolean;
+  UninstallRegPath: String;
+  Needs32BitUninstall: Boolean;
+  UninstallCmd32Bit: String;
+  ActualVccMajor: Cardinal;
+  ActualVccMinor: Cardinal;
+  VccRegLoc: String;
+  VccRegLoc2: String;
 
+function PreferArm64Files: Boolean;
+begin
+  Result := IsArm64;
+end;
+
+function PreferX64Files: Boolean;
+begin
+  Result := not PreferArm64Files and IsX64Compatible;
+end;
+
+function PreferX86Files: Boolean;
+begin
+  Result := not PreferArm64Files and not PreferX64Files;
+end;
+  
 function OnDownloadProgress(const Url, FileName: String; const Progress, ProgressMax: Int64): Boolean;
 begin
   if Progress = ProgressMax then
@@ -62,9 +99,40 @@ end;
 
 procedure InitializeWizard;
 begin
-  DepLoc := not RegKeyExists(HKLM, 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\X86');
-  DepLoc2 := not RegKeyExists(HKLM, 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\X86');
+  if PreferArm64Files() then begin
+  VccRegLoc := 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\arm64';
+  // Generally unsure that the second location needs to be checked but can't hurt
+  VccRegLoc2 := 'SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\arm64';
+  DepUrl := 'https://aka.ms/vc14/vc_redist.arm64.exe';
+  end
+  else if PreferX64Files() then begin
+  VccRegLoc := 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64';
+  VccRegLoc2 := 'SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\x64';
+  DepUrl := 'https://aka.ms/vc14/vc_redist.x64.exe';
+  end
+  else if PreferX86Files() then begin
+  VccRegLoc := 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x86';
+  VccRegLoc2 := 'SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\x86';
+  DepUrl := 'https://aka.ms/vc14/vc_redist.x86.exe';
+  end;
+  DepLoc := not RegKeyExists(HKLM, VccRegLoc);
+  DepLoc2 := not RegKeyExists(HKLM, VccRegLoc2);
   NeedsVcc := DepLoc and DepLoc2;
+  // Check to see if the installation is reasonably recent
+  // Unsure if this is strictly necessary
+  ActualVccMajor := 0;
+  ActualVccMinor := 0;
+  if not DepLoc then begin
+    RegQueryDWordValue(HKLM, VccRegLoc, 'Major', ActualVccMajor);
+    RegQueryDWordValue(HKLM, VccRegLoc, 'Minor', ActualVccMinor);
+  end
+  else if not DepLoc2 then begin
+    RegQueryDWordValue(HKLM, VccRegLoc2, 'Major', ActualVccMajor);
+    RegQueryDWordValue(HKLM, VccRegLoc2, 'Minor', ActualVccMinor);  
+  end;
+  if (ActualVccMajor < Cardinal(14)) or ((ActualVccMajor = Cardinal(14)) and (ActualVccMinor < Cardinal(44))) then begin
+    NeedsVcc := True;
+  end;
   DownloadPage := CreateDownloadPage(SetupMessage(msgWizardPreparing), SetupMessage(msgPreparingDesc), @OnDownloadProgress);
 end;
 
@@ -72,7 +140,7 @@ function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   if (CurPageID = wpReady) and (NeedsVcc) then begin
     DownloadPage.Clear;
-    DownloadPage.Add('https://aka.ms/vs/17/release/vc_redist.x86.exe', 'vc_redist.x86.exe', '');
+    DownloadPage.Add(DepUrl, 'vc_redist.exe', '');
     DownloadPage.Show;
     try
       try
@@ -94,9 +162,62 @@ end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
-  ResultCode: integer;
+  ResultCode: Integer;
+  ResultCodeUninstall: Integer;
+  ErrorCode: Integer;
+  Uninstall32BitError: String;
 begin
+  // Uninstaller should NOT be executed for: previous x64/arm64 (same location) on x64/arm64 system; previous x86 installation on x86 system (native registry);
+  // in both cases: WHERE previous installation was ADMIN and current installation is ADMIN; OR WHERE previous installation was ADMIN and current installation is USER;
+
+  // Uninstall previous 32 bit ADMIN version
+  UninstallRegPath := 'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\' + ExpandConstant('{#SetupSetting("AppId")}') + '_is1';
+  Uninstall32BitError := 'An existing 32-bit installation of WebBT server was found on the system which could not be automatically uninstalled. Please uninstall it, then try running this installer again.';
+  Needs32BitUninstall := RegKeyExists(HKLM, UninstallRegPath);
+  if (Needs32BitUninstall) then
+    begin
+     if (not RegQueryStringValue(HKLM, UninstallRegPath, 'UninstallString', UninstallCmd32Bit)) then
+     begin
+       Result := Uninstall32BitError;
+       Exit;
+     end;
+     Exec(RemoveQuotes(UninstallCmd32Bit), '/SILENT', '', SW_SHOW, ewWaitUntilTerminated, ResultCodeUninstall);
+     if (ResultCodeUninstall <> 0) then begin
+       Result := Uninstall32BitError;
+       Exit;
+     end;
+  end;
+  
+  // Uninstall previous USER version if we aren't currently in USER mode
+  // (Firefox looks for USER installations first)
+  if IsAdminInstallMode then begin
+    UninstallRegPath := 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\' + ExpandConstant('{#SetupSetting("AppId")}') + '_is1';
+    Uninstall32BitError := 'An existing user installation of WebBT server was found on the system which could not be automatically uninstalled. Please complete this installation as a user (non-admin), or uninstall the user installation then try running this installer again.';
+    Needs32BitUninstall := RegKeyExists(HKCU, UninstallRegPath);
+    if (Needs32BitUninstall) then
+      begin
+       if (not RegQueryStringValue(HKCU, UninstallRegPath, 'UninstallString', UninstallCmd32Bit)) then
+       begin
+         Result := Uninstall32BitError;
+         Exit;
+       end;
+       Exec(RemoveQuotes(UninstallCmd32Bit), '/SILENT', '', SW_SHOW, ewWaitUntilTerminated, ResultCodeUninstall);
+       if (ResultCodeUninstall <> 0) then begin
+         Result := Uninstall32BitError;
+         Exit;
+       end;
+    end;
+  end;
+
   if NeedsVcc then begin
-    Exec(ExpandConstant('{tmp}\vc_redist.x86.exe'), '/install /passive', '', SW_SHOW, ewWaitUntilTerminated, ResultCode);
+    Exec(ExpandConstant('{tmp}\vc_redist.exe'), '/install /passive', '', SW_SHOW, ewWaitUntilTerminated, ResultCode);
+    if (ResultCode <> 0) then begin
+       Result := 'Setup detected that the latest Microsoft Visual C++ Redistributable, which is required by WebBT server, is not installed on your system. Please install the correct version for your CPU architecture, then try running this installer again. The download page has been opened.';
+       ShellExecAsOriginalUser('', 'https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170#latest-supported-redistributable-version', '', '', SW_SHOWNORMAL, ewNoWait, ErrorCode);
+       if (ErrorCode <> 0) then begin
+       Result := 'Unable to open the Microsoft Visual C++ Redistributable download page. Please navigate to https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170#latest-supported-redistributable-version, install the correct version for your CPU architecture, then try running this installer again.';
+       Exit;
+       end;
+    end;
   end;
 end;
