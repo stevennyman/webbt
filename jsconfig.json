@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "target": "es2024",
+    "module": "ESNext",
+    "checkJs": true,
+    "moduleResolution": "node",
+    "lib": ["ES2024", "DOM"]
+  },
+  "include": ["extension/**/*", "tests/**/*"],
+  "exclude": ["node_modules", "BLEServer"]
+}
