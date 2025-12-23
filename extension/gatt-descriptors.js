@@ -9,6 +9,8 @@ const STANDARD_GATT_DESCRIPTORS = {
     'gatt.client_characteristic_configuration': 0x2902,
     'gatt.server_characteristic_configuration': 0x2903,
     complete_br_edr_transport_block_data: 0x290F,
+    cooking_sensor_info: 0x2916,
+    cooking_trigger_setting: 0x2917,
     es_configuration: 0x290B,
     es_measurement: 0x290C,
     es_trigger_setting: 0x290D,
