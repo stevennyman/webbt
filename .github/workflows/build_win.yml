@@ -12,6 +12,7 @@ jobs:
 
             - name: Compile release
               run: |
+                cd BLEServer
                 msbuild BLEServer.sln /p:Configuration=Release /p:Platform=ARM64
                 msbuild BLEServer.sln /p:Configuration=Release /p:Platform=x64
                 msbuild BLEServer.sln /p:Configuration=Release /p:Platform=x86
