@@ -7,8 +7,10 @@ jobs:
         runs-on: windows-2025
         
         steps:
+            - name: Add msbuild to PATH
+              uses: microsoft/setup-msbuild@v2
+
             - name: Compile release
-            
               run: |
                 msbuild BLEServer.sln /p:Configuration=Release /p:Platform=ARM64
                 msbuild BLEServer.sln /p:Configuration=Release /p:Platform=x64
