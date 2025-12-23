@@ -1,5 +1,3 @@
-/* global window, document */
-
 // Connect to background script
 var port = null;
 let chooserUI = null;

@@ -1,6 +1,4 @@
-
-
-SUPPORTED_HOST_API_VERSION = 1;
+const SUPPORTED_HOST_API_VERSION = 1;
 
 let debugPrints = false;
 
@@ -30,7 +28,7 @@ async function openOrFocusInfoTab() {
     if (infoTabId != null) {
         try {
             await browser.tabs.update(infoTabId, { active: true });
-        } catch (e) {
+        } catch {
             infoTabId = (await browser.tabs.create({ url: '/installation.html' })).id;
         }
     } else {
@@ -97,7 +95,7 @@ function nativePortOnMessage(msg) {
             openOrFocusInfoTab();
         } else if (msg.serverName == 'bleserver-win-cppcx' && msg.serverVersion == '0.5.2') {
             // we're not requiring 0.5.2 server users to update but we are recommending it
-            // the server API remains compatible and some users may have restrictions that prevent them from installing software
+            // server API remains compatible, some users may have restrictions preventing them from installing software
             currentRecommendedUpdateContents = { _type: 'recommendedUpdate', message: 'A recommended update for WebBT Server, version 0.5.3, is now available for your system. This update improves performance and pairing reliability.', consoleMessage: 'A recommended update for WebBT Server, version 0.5.3, is now available for your system. This update improves performance and pairing reliability. https://github.com/stevennyman/webbt/releases/latest' };
             for (const reqId in requests) {
                 commandPorts[reqId].postMessage({ currentRecommendedUpdateContents: currentRecommendedUpdateContents });
@@ -144,7 +142,7 @@ function nativePortOnMessage(msg) {
     }
 }
 
-browser.browserAction.onClicked.addListener((e) => browser.runtime.openOptionsPage());
+browser.browserAction.onClicked.addListener(() => browser.runtime.openOptionsPage());
 
 const portsObjects = new Map();
 const subscriptionOrigins = {};
@@ -304,8 +302,8 @@ function matchDeviceFilter(filter, device) {
     return true;
 }
 
-webIdToGattIdMap = {};
-webIdToAddressMap = {};
+const webIdToGattIdMap = {};
+const webIdToAddressMap = {};
 
 // caching function for webId to gattId conversions since browser storage access can be a bit slow
 async function webIdToGattId(webId, port = null, origin = null) {
@@ -436,7 +434,9 @@ async function requestDevice(port, options) {
     }
 
     nativePort.onMessage.addListener(scanResultListener);
-    port.postMessage({ _type: 'showDeviceChooser', currentRecommendedUpdateContents: currentRecommendedUpdateContents });
+    port.postMessage({
+        _type: 'showDeviceChooser', currentRecommendedUpdateContents: currentRecommendedUpdateContents,
+    });
     try {
         await startScanning(port);
     } catch (error) {
@@ -497,7 +497,9 @@ async function requestDevice(port, options) {
                     break;
                 }
             }
-            currentOriginDevices.push({ address: deviceAddress, name: deviceNames[deviceAddress], gattId: gattId, webId: currentWebId });
+            currentOriginDevices.push({
+                address: deviceAddress, name: deviceNames[deviceAddress], gattId: gattId, webId: currentWebId,
+            });
         }
         await browser.storage.local.set({ [storageKey]: currentOriginDevices });
 
@@ -519,7 +521,7 @@ async function watchAdvertisements(port, webId) {
     const currentOriginDevices = (await browser.storage.local.get({ [storageKey]: [] }))[storageKey];
     let validMatchFound = false;
     let deviceName = 'Device Name Unknown';
-    let deviceRssi = 0;
+    // let deviceRssi = 0;
     for (const originDevice of currentOriginDevices) {
         if (originDevice.address === address || (gattId && originDevice.gattId === gattId)) {
             validMatchFound = true;
@@ -559,7 +561,7 @@ async function watchAdvertisements(port, webId) {
                 for (let i = 0; i < msg.serviceData.length; i++) {
                     msg.serviceData[i].service = normalizeServiceUuid(msg.serviceData[i].service);
                 }
-                deviceRssi = msg.rssi;
+                // deviceRssi = msg.rssi;
                 delete msg['gattId'];
                 msg.address = webId;
                 port.postMessage(msg);
@@ -627,7 +629,9 @@ async function gattConnect(port, webId) {
         }
     }
     if (!alreadyInStorage) {
-        currentOriginDevices.push({ address: address, name: deviceNames[address], gattId: gattId });
+        currentOriginDevices.push({
+            address: address, name: portsObjects.get(port).deviceIdNames[address], gattId: gattId,
+        });
     }
     if (needUpdate) {
         await browser.storage.local.set({ [storageKey]: currentOriginDevices });
@@ -915,7 +919,7 @@ async function forgetDevice(port, webId, origin = null) {
 
     // also remove from subscriptions
     if (desiredOrigin in subscriptionOrigins) {
-        for (possibleAddress of Object.keys(subscriptionOrigins[desiredOrigin])) {
+        for (const possibleAddress of Object.keys(subscriptionOrigins[desiredOrigin])) {
             if (possibleAddress.endsWith(address)) {
                 const subList = subscriptionOrigins[desiredOrigin][possibleAddress];
                 for (const elem of subList) {
@@ -931,7 +935,7 @@ async function forgetDevice(port, webId, origin = null) {
     // TODO refactor connection to primarily use gatt IDs?
 
     if (desiredOrigin in webIdToGattIdMap) {
-        for (possibleAddress of Object.entries(webIdToGattIdMap[desiredOrigin])) {
+        for (const possibleAddress of Object.entries(webIdToGattIdMap[desiredOrigin])) {
             if (possibleAddress[1].endsWith(address)) {
                 delete webIdToGattIdMap[desiredOrigin][possibleAddress[0]];
             }
@@ -939,7 +943,7 @@ async function forgetDevice(port, webId, origin = null) {
     }
 
     if (desiredOrigin in webIdToAddressMap) {
-        for (possibleAddress of Object.entries(webIdToAddressMap[desiredOrigin])) {
+        for (const possibleAddress of Object.entries(webIdToAddressMap[desiredOrigin])) {
             if (possibleAddress[1] == address) {
                 delete webIdToAddressMap[desiredOrigin][possibleAddress[0]];
             }

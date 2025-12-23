@@ -1,4 +1,4 @@
-/* global navigator, window, Zone */
+/* global Zone */
 
 if (!navigator.bluetooth) {
     console.log('WebBT loaded');
@@ -35,7 +35,9 @@ if (!navigator.bluetooth) {
                 // TODO improve this experience
                 if (event.data.error === 'Unsupported host version' && !hostVersionErrorShown) {
                     hostVersionErrorShown = true;
-                    console.log('WebBT: Unsupported host version installed, please install the latest correct version.');
+                    console.log(
+                        'WebBT: Unsupported host version installed, please install the latest correct version.',
+                    );
                 }
                 const request = outstandingRequests[event.data.id];
                 if (request) {
@@ -457,7 +459,7 @@ if (!navigator.bluetooth) {
             try {
                 return BluetoothUUID.canonicalUUID(alias);
             /* eslint-disable-next-line no-empty*/
-            } catch (error) {}
+            } catch {}
             if (alias.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)) {
                 return alias;
             }
