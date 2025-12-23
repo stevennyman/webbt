@@ -10,6 +10,9 @@ jobs:
             - name: Add msbuild to PATH
               uses: microsoft/setup-msbuild@v2
 
+            - name: Checkout repo
+              uses: actions/checkout@v6
+
             - name: Compile release
               run: |
                 cd BLEServer
