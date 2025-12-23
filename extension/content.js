@@ -4,6 +4,8 @@
 var port = null;
 let chooserUI = null;
 
+let recommendedUpdateShown = false;
+
 function disconnectport() {
     if (port) {
         port.disconnect();
@@ -21,11 +23,29 @@ function portMsg(message) {
         // do not return here
     }
 
+    if ('currentRecommendedUpdateContents' in message && message.currentRecommendedUpdateContents) {
+        if (chooserUI) {
+            chooserUI.showRecommendedUpdate(message.currentRecommendedUpdateContents.message);
+        }
+        if (!recommendedUpdateShown) {
+            console.log(message.currentRecommendedUpdateContents.consoleMessage);
+            recommendedUpdateShown = true;
+        }
+    } else if ('currentRecommendedUpdateContents' in message && message.currentRecommendedUpdateContents === null) {
+        if (chooserUI) {
+            chooserUI.hideRecommendedUpdate();
+        }
+        recommendedUpdateShown = false;
+    }
+
     if (message._type === 'showDeviceChooser') {
         if (!chooserUI) {
             chooserUI = new DeviceChooserUI();
             chooserUI.onPair = (deviceId, gattId) => port.postMessage({ cmd: 'chooserPair', deviceId, gattId });
             chooserUI.onCancel = () => port.postMessage({ cmd: 'chooserCancel' });
+            if (message.currentRecommendedUpdateContents) {
+                chooserUI.showRecommendedUpdate(message.currentRecommendedUpdateContents.message);
+            }
         }
         chooserUI.show();
         return;
@@ -198,18 +218,26 @@ class DeviceChooserUI {
                     padding: 4px 12px;
                 }
 
+                #recommendedUpdate {
+                    background: #f0d759;
+                    margin-bottom: 6px;
+                }
+
             </style>
 
             <dialog id="chooser-dialog">
                 <span id="hostname"> </span> wants to pair
                 <div id="device-list">
                 </div>
+                <div id="recommendedUpdate" hidden>
+                    <span id="recommendedUpdateText"></span><br /><a href="https://github.com/stevennyman/webbt/releases" target="_blank">Download Now</a>
+                </div>
                 <div id="buttons">
                     <button id="btn-cancel">Cancel</button>
                     <button id="btn-pair">Pair</button>
                 </div>
                 <div id="footer">
-                    This website will be able to retain access to this device for future visits. Access can be revoked in <a href="${chrome.runtime.getURL("options.html")}" target="_blank" id="openOptions">Web Bluetooth Options</a>.<br /> <br />
+                    This website will be able to retain access to this device for future visits. Access can be revoked in <a href="" target="_blank" id="openOptions">Web Bluetooth Options</a>.<br /> <br />
                     Powered by <a href="https://github.com/stevennyman/webbt" target="_blank">WebBT for Firefox</a>
                 </div>
             </dialog>
@@ -232,7 +260,12 @@ class DeviceChooserUI {
         this.windows_nobluetooth = shadowRoot.getElementById('windows_nobluetooth');
         this.windows_nobluetooth_ok = shadowRoot.getElementById('windows_nobluetooth_ok');
 
+
+        this.recommendedUpdate = shadowRoot.getElementById('recommendedUpdate');
+        this.recommendedUpdateText = shadowRoot.getElementById('recommendedUpdateText');
+
         this.openOptions = shadowRoot.getElementById('openOptions');
+        this.openOptions.href = chrome.runtime.getURL('options.html');
         this.openOptions.addEventListener('click', e => {
             port.postMessage({ command: 'openOptions', args: [] });
             e.preventDefault();
@@ -259,6 +292,15 @@ class DeviceChooserUI {
 
     hide() {
         document.body.removeChild(this.container);
+    }
+
+    showRecommendedUpdate(updateText) {
+        this.recommendedUpdateText.innerText = updateText;
+        this.recommendedUpdate.removeAttribute('hidden');
+    }
+
+    hideRecommendedUpdate() {
+        this.recommendedUpdate.hidden = true;
     }
 
     winError() {

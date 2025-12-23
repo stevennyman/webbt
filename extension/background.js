@@ -21,6 +21,8 @@ let infoTabId = null;
 let nativeResolve = null;
 let nativeReady = null;
 
+let currentRecommendedUpdateContents = null;
+
 async function openOrFocusInfoTab() {
     if (Date.now() - lastInfoTab < COOLDOWN_MS) return;
     if ((await browser.storage.local.get("hideInstallation")).hideInstallation) return;
@@ -94,6 +96,18 @@ function nativePortOnMessage(msg) {
             commandPorts = {};
             console.log('Unsupported WebBT server version. Extension or server update required. https://github.com/stevennyman/webbt/releases/latest');
             openOrFocusInfoTab();
+        } else if (msg.serverName == 'bleserver-win-cppcx' && msg.serverVersion == "0.5.2") {
+            // we're not requiring 0.5.2 server users to update but we are recommending it
+            // the server API remains compatible and some users may have restrictions that prevent them from installing software
+            currentRecommendedUpdateContents = {_type: 'recommendedUpdate', message: 'A recommended update for WebBT Server, version 0.5.3, is now available for your system. This update improves performance and pairing reliability.', consoleMessage: 'A recommended update for WebBT Server, version 0.5.3, is now available for your system. This update improves performance and pairing reliability. https://github.com/stevennyman/webbt/releases/latest'}
+            for (const reqId in requests) {
+                commandPorts[reqId].postMessage({currentRecommendedUpdateContents: currentRecommendedUpdateContents})
+            }
+        } else {
+            currentRecommendedUpdateContents = null;
+            for (const reqId in requests) {
+                commandPorts[reqId].postMessage({currentRecommendedUpdateContents: null})
+            }
         }
     }
     if (msg.pairingType && commandPorts[msg._id]) {
@@ -423,7 +437,7 @@ async function requestDevice(port, options) {
     }
 
     nativePort.onMessage.addListener(scanResultListener);
-    port.postMessage({ _type: 'showDeviceChooser' });
+    port.postMessage({ _type: 'showDeviceChooser', currentRecommendedUpdateContents: currentRecommendedUpdateContents });
     try {
         await startScanning(port);
     } catch (error) {
@@ -559,7 +573,7 @@ async function watchAdvertisements(port, webId) {
 
     await startScanning(port);
 
-    return {};
+    return {currentRecommendedUpdateContents: currentRecommendedUpdateContents};
 }
 
 async function stopAdvertisements(port, webId, stopAll = false) {

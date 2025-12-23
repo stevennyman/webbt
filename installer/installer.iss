@@ -166,25 +166,51 @@ var
   ResultCodeUninstall: Integer;
   ErrorCode: Integer;
   Uninstall32BitError: String;
+  Uninstall32BitErrorUser: String;
+  NeedsUserNotify: Boolean;
 begin
   // Uninstaller should NOT be executed for: previous x64/arm64 (same location) on x64/arm64 system; previous x86 installation on x86 system (native registry);
   // in both cases: WHERE previous installation was ADMIN and current installation is ADMIN; OR WHERE previous installation was ADMIN and current installation is USER;
+  
+  // NOTIFY if installing a USER installation where a previous NATIVE ADMIN installation exists
+  // unlikely scenario for 0.5.3
+  if not IsAdminInstallMode then begin
+    UninstallRegPath := 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\' + ExpandConstant('{#SetupSetting("AppId")}') + '_is1';
+    Uninstall32BitErrorUser := 'An existing administrative systemwide installation of WebBT server was found on the system. Firefox will use this new user-installed version for the current user only.';
+    NeedsUserNotify := RegKeyExists(HKLM, UninstallRegPath);
+    if NeedsUserNotify then begin
+      SuppressibleMsgBox(Uninstall32BitErrorUser, mbInformation, MB_OK, 1)
+    end;
+  end;
 
-  // Uninstall previous 32 bit ADMIN version
+  // Uninstall previous 32 bit ADMIN version if installing as ADMIN
   UninstallRegPath := 'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\' + ExpandConstant('{#SetupSetting("AppId")}') + '_is1';
   Uninstall32BitError := 'An existing 32-bit installation of WebBT server was found on the system which could not be automatically uninstalled. Please uninstall it, then try running this installer again.';
+  Uninstall32BitErrorUser := 'An existing 32-bit administrative systemwide installation of WebBT server was found on the system which could not be automatically uninstalled. Firefox will use this new user-installed version for the current user only.';
   Needs32BitUninstall := RegKeyExists(HKLM, UninstallRegPath);
   if (Needs32BitUninstall) then
     begin
      if (not RegQueryStringValue(HKLM, UninstallRegPath, 'UninstallString', UninstallCmd32Bit)) then
      begin
-       Result := Uninstall32BitError;
-       Exit;
+       if IsAdminInstallMode then
+       begin
+         Result := Uninstall32BitError;
+         Exit;
+       end
+       else begin
+         SuppressibleMsgBox(Uninstall32BitErrorUser, mbInformation, MB_OK, 1);
+       end;
      end;
      Exec(RemoveQuotes(UninstallCmd32Bit), '/SILENT', '', SW_SHOW, ewWaitUntilTerminated, ResultCodeUninstall);
      if (ResultCodeUninstall <> 0) then begin
-       Result := Uninstall32BitError;
-       Exit;
+       if IsAdminInstallMode then
+       begin
+         Result := Uninstall32BitError;
+         Exit;
+       end
+       else begin
+         SuppressibleMsgBox(Uninstall32BitErrorUser, mbInformation, MB_OK, 1);
+       end;
      end;
   end;
   
