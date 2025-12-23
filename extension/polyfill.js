@@ -1,7 +1,6 @@
 /* global navigator, window, Zone */
 
 if (!navigator.bluetooth) {
-    // eslint-disable-next-line no-console
     console.log('WebBT loaded');
 
     (function () {
@@ -36,7 +35,7 @@ if (!navigator.bluetooth) {
                 // TODO improve this experience
                 if (event.data.error === 'Unsupported host version' && !hostVersionErrorShown) {
                     hostVersionErrorShown = true;
-                    console.log("WebBT: Unsupported host version installed, please install the latest correct version.");
+                    console.log('WebBT: Unsupported host version installed, please install the latest correct version.');
                 }
                 const request = outstandingRequests[event.data.id];
                 if (request) {
@@ -354,7 +353,7 @@ if (!navigator.bluetooth) {
                     for (const manufacturerDataEntry of event.manufacturerData) {
                         manufacturerDataTmp.set(
                             manufacturerDataEntry.companyIdentifier,
-                            new DataView(new Uint8Array(manufacturerDataEntry.data).buffer)
+                            new DataView(new Uint8Array(manufacturerDataEntry.data).buffer),
                         );
                     }
                     let manufacturerData = new BluetoothManufacturerDataMap(manufacturerDataTmp);
@@ -362,7 +361,7 @@ if (!navigator.bluetooth) {
                     for (const serviceDataEntry of event.serviceData) {
                         serviceDataTmp.set(
                             serviceDataEntry.service,
-                            new DataView(new Uint8Array(serviceDataEntry.data).buffer)
+                            new DataView(new Uint8Array(serviceDataEntry.data).buffer),
                         );
                     }
                     let serviceData = new BluetoothServiceDataMap(serviceDataTmp);

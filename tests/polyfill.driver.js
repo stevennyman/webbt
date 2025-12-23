@@ -35,7 +35,6 @@ class PolyfillDriver {
         const mockConsole = {
             log: jest.fn((...args) => {
                 if (args[0] !== 'Windows 10 Web Bluetooth Polyfill loaded') {
-                    // eslint-disable-next-line no-console
                     console.log(...args);
                 }
             }),

@@ -1,4 +1,4 @@
-/* eslint-disable no-console */
+
 
 SUPPORTED_HOST_API_VERSION = 1;
 
@@ -25,16 +25,16 @@ let currentRecommendedUpdateContents = null;
 
 async function openOrFocusInfoTab() {
     if (Date.now() - lastInfoTab < COOLDOWN_MS) return;
-    if ((await browser.storage.local.get("hideInstallation")).hideInstallation) return;
+    if ((await browser.storage.local.get('hideInstallation')).hideInstallation) return;
     lastInfoTab = Date.now();
     if (infoTabId != null) {
         try {
             await browser.tabs.update(infoTabId, { active: true });
         } catch (e) {
-            infoTabId = (await browser.tabs.create({ url: "/installation.html" })).id;
+            infoTabId = (await browser.tabs.create({ url: '/installation.html' })).id;
         }
     } else {
-        infoTabId = (await browser.tabs.create({ url: "/installation.html" })).id;
+        infoTabId = (await browser.tabs.create({ url: '/installation.html' })).id;
     }
 }
 
@@ -50,7 +50,7 @@ async function nativeRequest(cmd, params, port) {
         if (cmd != 'ping') {
             await nativeReady;
             if (debugPrints) {
-                console.log("nativeReady complete")
+                console.log('nativeReady complete');
             }
         }
         if (debugPrints) {
@@ -63,15 +63,14 @@ async function nativeRequest(cmd, params, port) {
                 console.log(e);
             }
             nativeResolve();
-            if (nativePort.error && nativePort.error.message.startsWith("No such native application ")) {
+            if (nativePort.error && nativePort.error.message.startsWith('No such native application ')) {
                 await openOrFocusInfoTab();
                 port.postMessage({ _type: 'hideDeviceChooser' });
-                reject("WebBT server not installed. https://github.com/stevennyman/webbt/releases/latest");
+                reject('WebBT server not installed. https://github.com/stevennyman/webbt/releases/latest');
             } else {
                 reject(e);
             }
         }
-
     });
 }
 
@@ -96,17 +95,17 @@ function nativePortOnMessage(msg) {
             commandPorts = {};
             console.log('Unsupported WebBT server version. Extension or server update required. https://github.com/stevennyman/webbt/releases/latest');
             openOrFocusInfoTab();
-        } else if (msg.serverName == 'bleserver-win-cppcx' && msg.serverVersion == "0.5.2") {
+        } else if (msg.serverName == 'bleserver-win-cppcx' && msg.serverVersion == '0.5.2') {
             // we're not requiring 0.5.2 server users to update but we are recommending it
             // the server API remains compatible and some users may have restrictions that prevent them from installing software
-            currentRecommendedUpdateContents = {_type: 'recommendedUpdate', message: 'A recommended update for WebBT Server, version 0.5.3, is now available for your system. This update improves performance and pairing reliability.', consoleMessage: 'A recommended update for WebBT Server, version 0.5.3, is now available for your system. This update improves performance and pairing reliability. https://github.com/stevennyman/webbt/releases/latest'}
+            currentRecommendedUpdateContents = { _type: 'recommendedUpdate', message: 'A recommended update for WebBT Server, version 0.5.3, is now available for your system. This update improves performance and pairing reliability.', consoleMessage: 'A recommended update for WebBT Server, version 0.5.3, is now available for your system. This update improves performance and pairing reliability. https://github.com/stevennyman/webbt/releases/latest' };
             for (const reqId in requests) {
-                commandPorts[reqId].postMessage({currentRecommendedUpdateContents: currentRecommendedUpdateContents})
+                commandPorts[reqId].postMessage({ currentRecommendedUpdateContents: currentRecommendedUpdateContents });
             }
         } else {
             currentRecommendedUpdateContents = null;
             for (const reqId in requests) {
-                commandPorts[reqId].postMessage({currentRecommendedUpdateContents: null})
+                commandPorts[reqId].postMessage({ currentRecommendedUpdateContents: null });
             }
         }
     }
@@ -136,7 +135,7 @@ function nativePortOnMessage(msg) {
         const device = devices[gattId];
         if (device) {
             device.forEach(async port => {
-                port.postMessage({ event: 'disconnectEvent', device: (await gattIdToWebId(gattId, port))});
+                port.postMessage({ event: 'disconnectEvent', device: (await gattIdToWebId(gattId, port)) });
                 portsObjects.get(port).devices.delete(gattId);
             });
             delete characteristicCache[gattId];
@@ -327,7 +326,7 @@ async function webIdToGattId(webId, port = null, origin = null) {
                 compl = true;
                 webIdToGattIdMap[origin][webId] = dev.gattId;
                 return dev.gattId;
-            } 
+            }
         }
         if (!compl) {
             return null;
@@ -354,7 +353,7 @@ async function webIdToAddress(webId, port = null, origin = null) {
                 compl = true;
                 webIdToAddressMap[origin][webId] = dev.address;
                 return dev.address;
-            } 
+            }
         }
         if (!compl) {
             return null;
@@ -379,7 +378,7 @@ async function gattIdToWebId(gattId, port = null, origin = null) {
             compl = true;
             // webIdToAddressMap[origin][webId] = dev.address;
             return dev.webId;
-        } 
+        }
     }
     if (!compl) {
         return null;
@@ -455,7 +454,7 @@ async function requestDevice(port, options) {
                     return;
                 }
                 if (msg.cmd === 'chooserPair') {
-                    resolve({deviceAddress: msg.deviceId, gattId: msg.gattId});
+                    resolve({ deviceAddress: msg.deviceId, gattId: msg.gattId });
                 }
                 if (msg.cmd === 'chooserCancel') {
                     reject(new Error('User canceled device chooser'));
@@ -573,7 +572,7 @@ async function watchAdvertisements(port, webId) {
 
     await startScanning(port);
 
-    return {currentRecommendedUpdateContents: currentRecommendedUpdateContents};
+    return { currentRecommendedUpdateContents: currentRecommendedUpdateContents };
 }
 
 async function stopAdvertisements(port, webId, stopAll = false) {
@@ -653,7 +652,6 @@ async function gattDisconnect(port, webId, gattId = null) {
             }
         }
     }
-
 }
 
 async function getPrimaryService(port, webId, service) {
@@ -787,7 +785,7 @@ async function stopNotifications(port, webId, service, characteristic) {
     // remove subscriptionOrigins entry and clean up empty keys if needed
     const originSubscriptions = subscriptionOrigins[port.sender.origin][gattId];
     const index = originSubscriptions.findIndex(
-        ([svc, char, prt]) => svc === service && char === characteristic && prt === port
+        ([svc, char, prt]) => svc === service && char === characteristic && prt === port,
     );
     if (index > -1) originSubscriptions.splice(index, 1);
     if (!originSubscriptions.length) delete subscriptionOrigins[port.sender.origin][gattId];
@@ -883,7 +881,7 @@ async function getOriginDevices(port) {
     const result = new Set();
 
     for (const originDev of currentOriginDevices) {
-        result.add({address: originDev.webId, name: originDev.name});
+        result.add({ address: originDev.webId, name: originDev.name });
     }
     return result;
 }
@@ -893,7 +891,7 @@ async function forgetDevice(port, webId, origin = null) {
     let address = await webIdToAddress(webId, null, desiredOrigin);
     const storageKey = 'originDevices_'+desiredOrigin;
     const currentOriginDevices = (await browser.storage.local.get({ [storageKey]: [] }))[storageKey];
-        for (let i = 0; i < currentOriginDevices.length; i++) {
+    for (let i = 0; i < currentOriginDevices.length; i++) {
         if (currentOriginDevices[i].address === address) {
             currentOriginDevices.splice(i, 1);
             i--;
@@ -928,14 +926,14 @@ async function forgetDevice(port, webId, origin = null) {
     }
 
     // also stop advertisements
-    await stopAdvertisements(port, webId, true);    
+    await stopAdvertisements(port, webId, true);
 
     // TODO refactor connection to primarily use gatt IDs?
 
     if (desiredOrigin in webIdToGattIdMap) {
         for (possibleAddress of Object.entries(webIdToGattIdMap[desiredOrigin])) {
             if (possibleAddress[1].endsWith(address)) {
-                delete webIdToGattIdMap[desiredOrigin][possibleAddress[0]]
+                delete webIdToGattIdMap[desiredOrigin][possibleAddress[0]];
             }
         }
     }
@@ -943,7 +941,7 @@ async function forgetDevice(port, webId, origin = null) {
     if (desiredOrigin in webIdToAddressMap) {
         for (possibleAddress of Object.entries(webIdToAddressMap[desiredOrigin])) {
             if (possibleAddress[1] == address) {
-                delete webIdToAddressMap[desiredOrigin][possibleAddress[0]]
+                delete webIdToAddressMap[desiredOrigin][possibleAddress[0]];
             }
         }
     }
@@ -986,11 +984,10 @@ const exportedMethods = {
     watchAdvertisements,
     stopAdvertisements,
     forgetDevice,
-    openOptions
+    openOptions,
 };
 
 chrome.runtime.onConnect.addListener((port) => {
-
     portsObjects.set(port, {
         scanCount: 0,
         devices: new Set(),
@@ -1000,13 +997,13 @@ chrome.runtime.onConnect.addListener((port) => {
         deviceIdNames: new Map(),
     });
 
-    if (port.sender.url != browser.runtime.getURL("options.html")) {
+    if (port.sender.url != browser.runtime.getURL('options.html')) {
         activePorts++;
 
         if (nativePort === null) {
             nativeReady = new Promise((resolve) => {
                 nativeResolve = resolve;
-            })
+            });
             nativePort = chrome.runtime.connectNative('webbt.server');
             nativePort.onDisconnect.addListener(nativePortOnDisconnect);
             nativePort.onMessage.addListener(nativePortOnMessage);
@@ -1030,7 +1027,7 @@ chrome.runtime.onConnect.addListener((port) => {
         }
 
         // close the dedicated host process if nothing else is using it
-        if (port.sender.url != browser.runtime.getURL("options.html")) {
+        if (port.sender.url != browser.runtime.getURL('options.html')) {
             activePorts--;
             if (!activePorts) {
                 nativePort.disconnect();
