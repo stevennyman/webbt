@@ -1,8 +1,8 @@
-from os import system
+# from os import system
 from json import dumps
-import yaml # pip install PyYAML
+import yaml # pip install PyYAML or uv run --with PyYAML update_uuids.py
 
-system('git submodule update --remote Bluetooth_SIG_UUIDs') # git should also be installed
+# system('git submodule update --remote Bluetooth_SIG_UUIDs') # git should also be installed
 
 infiles = ['service_uuids', 'characteristic_uuids', 'descriptors']
 outfiles = ['gatt-services', 'gatt-characteristics', 'gatt-descriptors']
