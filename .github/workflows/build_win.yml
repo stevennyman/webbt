@@ -37,3 +37,14 @@ jobs:
               with:
                 name: BLEServer-x86
                 path: BLEServer\Release\BLEServer.exe
+
+            - name: Compile installer
+              run: |
+                cd ../installer
+                iscc installer.iss
+
+            - name: Upload installer
+              uses: actions/upload-artifact@v4
+              with:
+                name: Installer
+                path: installer\output\*
