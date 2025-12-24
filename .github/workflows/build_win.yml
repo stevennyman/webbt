@@ -40,7 +40,7 @@ jobs:
 
             - name: Compile installer
               run: |
-                cd ../installer
+                cd installer
                 iscc installer.iss
 
             - name: Upload installer
