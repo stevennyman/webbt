@@ -157,6 +157,7 @@ if (!navigator.bluetooth) {
                 return this.value;
             }
 
+            // TODO: this isn't to spec and should be corrected
             async writeValue(value) {
                 const byteValues = Array.from(new Uint8Array(value.buffer || value));
                 await callExtension('writeValue',

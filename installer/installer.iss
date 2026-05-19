@@ -2,8 +2,10 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "WebBT Server for Firefox"
-#define MyAppVersion "0.5.3"
+#define MyAppVersion "0.6.0"
 #define MyAppPublisher "Steven Nyman"
+
+#define USE_RUST
 
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application. Do not use the same AppId value in installers for other applications.
@@ -55,9 +57,16 @@ Root: HKA; Subkey: "SOFTWARE\Mozilla\NativeMessagingHosts\webbt.server"; Flags: 
 Root: HKA; Subkey: "SOFTWARE\Mozilla\NativeMessagingHosts\webbt.server"; ValueType: string; ValueData: "{app}\manifest.json"
 
 [Files]
+#ifdef USE_RUST
+Source: "..\rust_server\target\aarch64-pc-windows-msvc\release\BLEServer.exe"; DestDir: "{app}"; Check: PreferArm64Files; Flags: ignoreversion
+Source: "..\rust_server\target\debug\BLEServer.exe"; DestDir: "{app}"; Check: PreferX64Files; Flags: ignoreversion
+; Source: "..\rust_server\target\x86_64-pc-windows-msvc\release\BLEServer.exe"; DestDir: "{app}"; Check: PreferX64Files; Flags: ignoreversion
+Source: "..\rust_server\target\i686-pc-windows-msvc\release\BLEServer.exe"; DestDir: "{app}"; Check: PreferX86Files; Flags: ignoreversion
+#else
 Source: "..\BLEServer\ARM64\Release\BLEServer.exe"; DestDir: "{app}"; Check: PreferArm64Files; Flags: ignoreversion
 Source: "..\BLEServer\x64\Release\BLEServer.exe"; DestDir: "{app}"; Check: PreferX64Files; Flags: ignoreversion
 Source: "..\BLEServer\Release\BLEServer.exe"; DestDir: "{app}"; Check: PreferX86Files; Flags: ignoreversion
+#endif
 Source: "manifest.json"; DestDir: "{app}"; Flags: ignoreversion
 
 [Code]

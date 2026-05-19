@@ -1,0 +1,17 @@
+[package]
+name = "rust_server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bluest = { git = "https://github.com/alexmoon/bluest", branch = "main" }
+futures-lite = "2.6.1"
+serde_json = "1.0.147"
+single-instance = "0.3.3"
+tokio = { version = "1", features = ["full"] }
+webextension-native-messaging = "1.0.1"
+# native_messaging = { version = "0.2.0", default-features = false, features = ["tokio", "install", "windows-registry"] }
+
+[[bin]]
+name="BLEServer"
+path="src/main.rs"

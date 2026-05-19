@@ -1,6 +1,6 @@
-const SUPPORTED_HOST_API_VERSION = 1;
+const SUPPORTED_HOST_API_VERSIONS = [1, 2];
 
-let debugPrints = false;
+let debugPrints = true; // false
 
 let requestId = 0;
 let requests = {};
@@ -12,6 +12,8 @@ let nativePort = null;
 let listeners = {};
 let listenercnts = {};
 
+let portCnts = {};
+
 const COOLDOWN_MS = 30* 1000;
 let lastInfoTab = 0;
 let infoTabId = null;
@@ -20,6 +22,18 @@ let nativeResolve = null;
 let nativeReady = null;
 
 let currentRecommendedUpdateContents = null;
+
+// this is a flag that can be set by the server at startup as this differs by implementation
+// C++/CX uses one global scanning instance where the extension keeps count of how many instances are required
+// Rust uses a separate scanner for each request and thus must be shut down individually by id
+// Note: to prevent race conditions, any logic that evaluates this variable should await nativeReady
+// TODO: this needs to adapt correct to ensure support for both versions
+let serverMultiScanningInstance = true;
+
+function removeFirst(arr, value) {
+    const i = arr.indexOf(value);
+    if (i !== -1) arr.splice(i, 1);
+}
 
 async function openOrFocusInfoTab() {
     if (Date.now() - lastInfoTab < COOLDOWN_MS) return;
@@ -76,12 +90,17 @@ const subscriptions = {};
 const devices = {};
 
 function nativePortOnMessage(msg) {
+    if (msg._type === 'Start' && 'features' in msg) {
+        if ('ServerMultiScanningInstance' in msg.features) {
+            serverMultiScanningInstance = true;
+        }
+    }
     nativeResolve();
     if (debugPrints) {
         console.log('Received native message:', msg);
     }
     if (msg._type === 'Start') {
-        if (msg.apiVersion != SUPPORTED_HOST_API_VERSION) {
+        if (!SUPPORTED_HOST_API_VERSIONS.includes(msg.apiVersion)) {
             nativePort.disconnect();
             for (const reqId in requests) {
                 delete commandPorts[reqId];
@@ -187,15 +206,24 @@ function normalizeCharacteristicUuid(uuid) {
 }
 
 function windowsServiceUuid(uuid) {
+    if (serverMultiScanningInstance) {
+        return normalizeUuid(uuid, STANDARD_GATT_SERVICES);
+    }
     return '{' + normalizeUuid(uuid, STANDARD_GATT_SERVICES) + '}';
 }
 
 function windowsCharacteristicUuid(uuid) {
+    if (serverMultiScanningInstance) {
+        return normalizeUuid(uuid, STANDARD_GATT_CHARACTERISTICS);
+    }
     return '{' + normalizeUuid(uuid, STANDARD_GATT_CHARACTERISTICS) + '}';
 }
 
 function windowsDescriptorUuid(uuid) {
     if (uuid) {
+        if (serverMultiScanningInstance) {
+            return normalizeUuid(uuid, STANDARD_GATT_DESCRIPTORS);
+        }
         return '{' + normalizeUuid(uuid, STANDARD_GATT_DESCRIPTORS) + '}';
     } else {
         return uuid;
@@ -203,19 +231,26 @@ function windowsDescriptorUuid(uuid) {
 }
 
 let scanningCounter = 0;
-async function startScanning(port) {
+async function startScanning(port, name, serviceList = []) {
+    await nativeReady;
     if (!scanningCounter) {
-        await nativeRequest('scan', {}, port);
+        await nativeRequest('scan', { name: name, serviceList: serviceList }, port);
     }
     portsObjects.get(port).scanCount++;
+    portsObjects.get(port).scanNames.push[name];
     scanningCounter++;
 }
 
-function stopScanning(port) {
+async function stopScanning(port, name) {
+    await nativeReady;
     scanningCounter--;
     portsObjects.get(port).scanCount--;
-    if (!scanningCounter && nativePort && !(nativePort.error)) {
+    removeFirst(portsObjects.get(port).scanNames, name);
+    if (!scanningCounter && nativePort && !(nativePort.error) && !serverMultiScanningInstance) {
         nativeRequest('stopScan', {}, port);
+    }
+    if (serverMultiScanningInstance) {
+        nativeRequest('stopScan', { name: name }, port);
     }
 }
 
@@ -392,7 +427,30 @@ async function requestDevice(port, options) {
     if (options.exclusionFilters && ! options.filters) {
         throw new Error('exclusionFilters requires filters');
     }
+
+    // TODO TEMPORARY WORKAROUND for Rust on Linux issue
+    options.filters = null;
+    options.acceptAllDevices = true;
+    // End workaround
+
+    const serviceList = [];
+    let forceClearServiceList = false;
     if (options.filters) {
+        // optimization for Rust implementation
+        // Rust implementation allows us to filter for devices advertising at least one service
+        // But if any filter contains no services, we cannot use this optimization
+        for (const filter of options.filters) {
+            if (filter.services && filter.services.length) {
+                for (const serv of filter.services) {
+                    serviceList.push(normalizeServiceUuid(serv));
+                }
+            } else {
+                forceClearServiceList = true;
+            }
+        }
+        if (forceClearServiceList) {
+            serviceList.length = 0;
+        }
         if (options.filters.manufacturerData) {
             for (const elem of options.filters.manufacturerData) {
                 if (!elem.companyIdentifier) {
@@ -411,8 +469,9 @@ async function requestDevice(port, options) {
 
     let deviceNames = {};
     let deviceRssi = {};
+    const SCAN_NAME = 'requestDevice_'+port.sender.contextId;
     function scanResultListener(msg) {
-        if (msg._type === 'scanResult') {
+        if (msg._type === 'scanResult' && (!msg.scanName || msg.scanName == SCAN_NAME)) {
             if (msg.localName) {
                 deviceNames[msg.bluetoothAddress] = msg.localName;
             } else {
@@ -438,7 +497,7 @@ async function requestDevice(port, options) {
         _type: 'showDeviceChooser', currentRecommendedUpdateContents: currentRecommendedUpdateContents,
     });
     try {
-        await startScanning(port);
+        await startScanning(port, SCAN_NAME, serviceList);
     } catch (error) {
         if (error == 'The device is not ready for use.\r\n\r\nThe device is not ready for use.\r\n') {
             port.postMessage({ _type: 'deviceChooserWinError' });
@@ -509,7 +568,7 @@ async function requestDevice(port, options) {
             name: deviceNames[deviceAddress],
         };
     } finally {
-        stopScanning(port);
+        await stopScanning(port, SCAN_NAME);
         nativePort.onMessage.removeListener(scanResultListener);
     }
 }
@@ -572,7 +631,7 @@ async function watchAdvertisements(port, webId) {
     listeners['dev_'+port.sender.contextId+gattId] = scanResultListener;
     nativePort.onMessage.addListener(scanResultListener);
 
-    await startScanning(port);
+    await startScanning(port, 'dev_'+port.sender.contextId+gattId);
 
     return { currentRecommendedUpdateContents: currentRecommendedUpdateContents };
 }
@@ -588,7 +647,7 @@ async function stopAdvertisements(port, webId, stopAll = false) {
             nativePort.onMessage.removeListener(listeners['dev_'+port.sender.contextId+gattId]);
             delete listeners['dev_'+port.sender.contextId+gattId];
             delete listenercnts['dev_'+port.sender.contextId+gattId];
-            await stopScanning(port);
+            await stopScanning(port, 'dev_'+port.sender.contextId+gattId);
         }
     }
 }
@@ -601,7 +660,9 @@ async function gattConnect(port, webId) {
         throw new Error('Unknown device address');
     }
 
-    const gattId = await nativeRequest('connect', { address: address.replace(/:/g, '') }, port);
+    const gattId = await nativeRequest('connect', {
+        address: serverMultiScanningInstance ? address : address.replace(/:/g, '')
+    }, port);
     if (gattId != null) {
         if (!(port.sender.origin in webIdToGattIdMap)) {
             webIdToGattIdMap[port.sender.origin] = {};
@@ -754,30 +815,48 @@ async function writeValueWithoutResponse(port, webId, service, characteristic, v
 
 async function startNotifications(port, webId, service, characteristic) {
     let gattId = await webIdToGattId(webId, port);
+    const subscriptionName =
+        'subscription_'+gattId+'_'+windowsServiceUuid(service)+'_'+
+        windowsCharacteristicUuid(characteristic)+'_'+port.sender.contextId;
+    portCnts[subscriptionName] = (portCnts[subscriptionName] || 0) + 1;
+    // already notifying for this context
+    if (portCnts[subscriptionName] != 1 && serverMultiScanningInstance) {
+        return subscriptionName;
+    }
     const subscriptionId = await nativeRequest('subscribe', {
         device: gattId,
         service: windowsServiceUuid(service),
         characteristic: windowsCharacteristicUuid(characteristic),
+        subscriptionName: subscriptionName,
     }, port);
 
+    // TODO: refactor this?
     if (!subscriptions[subscriptionId]) {
         subscriptions[subscriptionId] = new Set();
     }
     subscriptions[subscriptionId].add(port);
 
     ((subscriptionOrigins[port.sender.origin] ??= {})[gattId] ??= []).push([service, characteristic, port]);
-    portsObjects.get(port).subscriptions.add(subscriptionId);
+    // portsObjects.get(port).subscriptions.add(subscriptionId);
     return subscriptionId;
 }
 
 async function stopNotifications(port, webId, service, characteristic) {
     let gattId = await webIdToGattId(webId, port);
     let subscriptionId;
+    const subscriptionName =
+        'subscription_'+gattId+'_'+windowsServiceUuid(service)+'_'+
+        windowsCharacteristicUuid(characteristic)+'_'+port.sender.contextId;
+    portCnts[subscriptionName] = portCnts[subscriptionName] - 1;
+    if (portCnts[subscriptionName] != 0) {
+        return subscriptionName;
+    }
     if (nativePort && !(nativePort.error)) {
         subscriptionId = await nativeRequest('unsubscribe', {
             device: gattId,
             service: windowsServiceUuid(service),
             characteristic: windowsCharacteristicUuid(characteristic),
+            subscriptionName: subscriptionName, // Rust server only cares about this one, C++ server uses other three
         }, port);
     }
 
@@ -795,7 +874,7 @@ async function stopNotifications(port, webId, service, characteristic) {
     if (!originSubscriptions.length) delete subscriptionOrigins[port.sender.origin][gattId];
     if (!Object.keys(subscriptionOrigins[port.sender.origin]).length) delete subscriptionOrigins[port.sender.origin];
 
-    portsObjects.get(port).subscriptions.delete(subscriptionId);
+    // portsObjects.get(port).subscriptions.delete(subscriptionId);
     return subscriptionId;
 }
 
@@ -994,8 +1073,9 @@ const exportedMethods = {
 chrome.runtime.onConnect.addListener((port) => {
     portsObjects.set(port, {
         scanCount: 0,
+        scanNames: [],
         devices: new Set(),
-        subscriptions: new Set(),
+        // subscriptions: new Set(),
         knownDeviceIds: new Set(),
         knownGattIds: new Set(),
         deviceIdNames: new Map(),
@@ -1019,12 +1099,12 @@ chrome.runtime.onConnect.addListener((port) => {
         });
     }
 
-    port.onDisconnect.addListener(() => {
+    port.onDisconnect.addListener(async () => {
         for (let gattDevice of portsObjects.get(port).devices.values()) {
             gattDisconnect(port, gattDevice);
         }
         while (portsObjects.get(port).scanCount > 0) {
-            stopScanning(port);
+            await stopScanning(port, portsObjects.get(port).scanNames.pop());
         }
         for (const value of Object.values(subscriptions)) {
             value.delete(port);
