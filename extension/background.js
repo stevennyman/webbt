@@ -28,7 +28,7 @@ let currentRecommendedUpdateContents = null;
 // Rust uses a separate scanner for each request and thus must be shut down individually by id
 // Note: to prevent race conditions, any logic that evaluates this variable should await nativeReady
 // TODO: this needs to adapt correct to ensure support for both versions
-let serverMultiScanningInstance = true;
+let serverApiVersion = 1;
 
 function removeFirst(arr, value) {
     const i = arr.indexOf(value);
@@ -90,10 +90,8 @@ const subscriptions = {};
 const devices = {};
 
 function nativePortOnMessage(msg) {
-    if (msg._type === 'Start' && 'features' in msg) {
-        if ('ServerMultiScanningInstance' in msg.features) {
-            serverMultiScanningInstance = true;
-        }
+    if (msg._type === 'Start' && 'apiVersion' in msg) {
+        serverApiVersion = msg.apiVersion;
     }
     nativeResolve();
     if (debugPrints) {
@@ -206,14 +204,14 @@ function normalizeCharacteristicUuid(uuid) {
 }
 
 function windowsServiceUuid(uuid) {
-    if (serverMultiScanningInstance) {
+    if (serverApiVersion === 2) {
         return normalizeUuid(uuid, STANDARD_GATT_SERVICES);
     }
     return '{' + normalizeUuid(uuid, STANDARD_GATT_SERVICES) + '}';
 }
 
 function windowsCharacteristicUuid(uuid) {
-    if (serverMultiScanningInstance) {
+    if (serverApiVersion === 2) {
         return normalizeUuid(uuid, STANDARD_GATT_CHARACTERISTICS);
     }
     return '{' + normalizeUuid(uuid, STANDARD_GATT_CHARACTERISTICS) + '}';
@@ -221,7 +219,7 @@ function windowsCharacteristicUuid(uuid) {
 
 function windowsDescriptorUuid(uuid) {
     if (uuid) {
-        if (serverMultiScanningInstance) {
+        if (serverApiVersion === 2) {
             return normalizeUuid(uuid, STANDARD_GATT_DESCRIPTORS);
         }
         return '{' + normalizeUuid(uuid, STANDARD_GATT_DESCRIPTORS) + '}';
@@ -246,11 +244,8 @@ async function stopScanning(port, name) {
     scanningCounter--;
     portsObjects.get(port).scanCount--;
     removeFirst(portsObjects.get(port).scanNames, name);
-    if (!scanningCounter && nativePort && !(nativePort.error) && !serverMultiScanningInstance) {
+    if (!scanningCounter && nativePort && !(nativePort.error)) {
         nativeRequest('stopScan', {}, port);
-    }
-    if (serverMultiScanningInstance) {
-        nativeRequest('stopScan', { name: name }, port);
     }
 }
 
@@ -661,7 +656,7 @@ async function gattConnect(port, webId) {
     }
 
     const gattId = await nativeRequest('connect', {
-        address: serverMultiScanningInstance ? address : address.replace(/:/g, '')
+        address: serverApiVersion === 2 ? address : address.replace(/:/g, ''),
     }, port);
     if (gattId != null) {
         if (!(port.sender.origin in webIdToGattIdMap)) {
@@ -817,17 +812,16 @@ async function startNotifications(port, webId, service, characteristic) {
     let gattId = await webIdToGattId(webId, port);
     const subscriptionName =
         'subscription_'+gattId+'_'+windowsServiceUuid(service)+'_'+
-        windowsCharacteristicUuid(characteristic)+'_'+port.sender.contextId;
+        windowsCharacteristicUuid(characteristic);
     portCnts[subscriptionName] = (portCnts[subscriptionName] || 0) + 1;
-    // already notifying for this context
-    if (portCnts[subscriptionName] != 1 && serverMultiScanningInstance) {
+    // already notifying for this port
+    if (portCnts[subscriptionName] != 1 && serverApiVersion === 2) {
         return subscriptionName;
     }
     const subscriptionId = await nativeRequest('subscribe', {
         device: gattId,
         service: windowsServiceUuid(service),
         characteristic: windowsCharacteristicUuid(characteristic),
-        subscriptionName: subscriptionName,
     }, port);
 
     // TODO: refactor this?
@@ -846,7 +840,7 @@ async function stopNotifications(port, webId, service, characteristic) {
     let subscriptionId;
     const subscriptionName =
         'subscription_'+gattId+'_'+windowsServiceUuid(service)+'_'+
-        windowsCharacteristicUuid(characteristic)+'_'+port.sender.contextId;
+        windowsCharacteristicUuid(characteristic);
     portCnts[subscriptionName] = portCnts[subscriptionName] - 1;
     if (portCnts[subscriptionName] != 0) {
         return subscriptionName;
@@ -856,7 +850,6 @@ async function stopNotifications(port, webId, service, characteristic) {
             device: gattId,
             service: windowsServiceUuid(service),
             characteristic: windowsCharacteristicUuid(characteristic),
-            subscriptionName: subscriptionName, // Rust server only cares about this one, C++ server uses other three
         }, port);
     }
 

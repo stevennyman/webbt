@@ -1,37 +1,56 @@
 // WebBT Server
-// Copyright (C) 2025, Steven Nyman. License: MIT.
+// Copyright (C) 2026, Steven Nyman. License: MIT.
 
-use bluest::{Adapter, ConnectionEvent, Device, DeviceId, Uuid};
+use anyhow::{Context, Result};
+use btleplug::api::{
+    Central, CentralEvent, CharPropFlags, Manager, Peripheral, ScanFilter, WriteType,
+};
+use btleplug::platform::Adapter;
+use futures_lite::Stream;
+use futures_lite::stream::StreamExt;
 use serde_json::{Map, Value, json};
 use single_instance::SingleInstance;
-use tokio::task::JoinHandle;
+use std::pin::Pin;
+use uuid::Uuid;
 use webextension_native_messaging::{read_message, write_message};
-use std::{collections::HashMap, sync::{Arc}};
-use tokio::sync::{Mutex, mpsc, oneshot};
-use futures_lite::stream::StreamExt;
 
 const API_VERSION: i32 = 2;
 
-// enum ServiceCmd {
-//     Read { char_uuid: Uuid, resp: oneshot::Sender<Result<Vec<u8>, String>> },
-//     Write { char_uuid: Uuid, data: Vec<u8>, with_rsp: bool, resp: oneshot::Sender<Result<(), String>> },
-//     Subscribe { char_uuid: Uuid, sub_name: String, resp: oneshot::Sender<Result<(), String>> },
-//     Stop,
-// }
+async fn write_peripheral_info(peripheral: &btleplug::platform::Peripheral) -> anyhow::Result<()> {
+    let properties = peripheral
+        .properties()
+        .await?
+        .context("No peripheral properties")?;
+    let msg = json!({
+        "_type": "scanResult",
+        "bluetoothAddress": properties.address.to_string(),
+        "rssi": properties.rssi.map(|r| json!(r)).unwrap_or(Value::Null),
+        "localName": properties.local_name.unwrap_or_else(|| properties.address.to_string()),
+        // no appearance
+        "txPower": properties.tx_power_level.map(|p| json!(p)).unwrap_or(Value::Null),
+        "serviceUuids": properties.services,
+        "manufacturerData": properties.manufacturer_data
+            .iter()
+            .map(|(company_id, data)| json!({"companyIdentifier": company_id, "data": data}))
+            .collect::<Vec<_>>(),
+        "serviceData": properties.service_data
+            .iter()
+            .map(|(uuid, data)| json!({"service": uuid, "data": data}))
+            .collect::<Vec<_>>(),
+        "gattId": peripheral.id(),
+        // not used: class (class of device), advertisement_name, address_type
+    });
+    let _ = write_message(&msg);
+    Ok(())
+}
 
-// async fn service_actor(device_id: DeviceId, service_str: Value, mut rx:mpsc::Receiver<ServiceCmd>) {
-
-// }
-
-async fn process_command(command: Value, active_scans: Arc<Mutex<HashMap<String, JoinHandle<()>>>>, device_cache: Arc<Mutex<HashMap<String, Device>>>, active_subscriptions: Arc<Mutex<HashMap<String, JoinHandle<()>>>>) {
+async fn process_command(command: Value, central: &Adapter) {
     let mut response = Map::new();
     response.insert("_type".into(), "response".into());
-    let cmd_id: i64 = command.get("_id")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(-1);
+    let cmd_id = command.get("_id").and_then(|v| v.as_i64()).unwrap_or(-1);
     response.insert("_id".into(), cmd_id.into());
 
-    match execute_command(&command, active_scans, device_cache, active_subscriptions).await {
+    match execute_command(&command, &central).await {
         Ok(result) => {
             response.insert("result".into(), result);
         }
@@ -44,327 +63,220 @@ async fn process_command(command: Value, active_scans: Arc<Mutex<HashMap<String,
     let _ = write_message(&response);
 }
 
-// background thread
-async fn scan_advertisements(name: &str, service_list: Vec<Uuid>, device_cache: Arc<Mutex<HashMap<String, Device>>>) -> Result<(), Box<dyn std::error::Error>> {
-    let adapter = Adapter::default().await.expect("Adapter required to scan");
-    let mut scan_final = adapter.scan(service_list.as_slice()).await?;
-    while let Some(discovered_device) = scan_final.next().await {
-        let mut device_cache_ul = device_cache.lock().await;
-        device_cache_ul.insert(discovered_device.device.id().to_string(), discovered_device.device.clone());
-        let mut msg = Map::new();
-        msg.insert("_type".into(), "scanResult".into());
-        // NEW for Rust
-        msg.insert("scanName".into(), name.into());
-        // not necessarily an address any more
-        msg.insert("bluetoothAddress".into(), discovered_device.device.id().to_string().into());
-        msg.insert("rssi".into(), discovered_device.rssi.into());
-        // dropping timestamp, advType which were unused
-        msg.insert("localName".into(), discovered_device.adv_data.local_name.or(Some("".to_string())).into());
-        // TODO REGRESSION reimplement appearance
-        msg.insert("appearance".into(), Value::Null);
-        //msg.insert("appearance".into(), discovered_device.adv_data.service_data);
-        let tx_power = discovered_device.adv_data.tx_power_level;
-        match tx_power {
-            Some(result) => {
-                msg.insert("txPower".into(), result.into());
-            }
-            None => {
-                msg.insert("txPower".into(), Value::Null);
-            }
-        }
-        let service_uuids: Vec<_> = discovered_device
-            .adv_data
-            .services
-            .into_iter()
-            .map(|u| u.to_string().into())
-            .collect();
-        msg.insert("serviceUuids".into(), Value::Array(service_uuids));
-        // REGRESSION this library doesn't support multiple manufacturer data
-        let manufacturer_data = discovered_device.adv_data.manufacturer_data;
-        match manufacturer_data {
-            Some(result) => {
-                msg.insert("manufacturerData".into(), json!([{"companyIdentifier": result.company_id, "data": result.data}]));
-            }
-            None => {
-                msg.insert("manufacturerData".into(), json!([]));
-            }
-        }
-
-        // REGRESSION? UUID format
-        let service_data: Vec<Value> = discovered_device
-            .adv_data
-            .service_data
-            .iter()
-            .map(|(uuid, data)| json!({ "service": uuid.to_string(), "data": data.clone() }))
-            .collect();
-        msg.insert("serviceData".into(), json!(service_data));
-
-        // now a duplicate of bluetoothAddress
-        msg.insert("gattId".into(), discovered_device.device.id().to_string().into());
-        
-        let _ = write_message(&msg);
-    }
-
-    Ok(())
-}
-
-async fn notify_characteristic(dev: &Device, service: &Value, characteristic: &Value, subscription_name: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let adapter = Adapter::default().await?;
-    adapter.wait_available().await?;
-    let service_uuid_str = service.as_str().ok_or_else(|| "Service string not available")?;
-    let service_uuid = Uuid::parse_str(service_uuid_str)?;
-    let services = dev.discover_services_with_uuid(service_uuid).await?;
-    let res = services.get(0).ok_or_else(|| "Service not available")?;
-    let reschr = res.discover_characteristics_with_uuid(Uuid::parse_str(characteristic.as_str().ok_or_else(|| "Characteristic not available")?)?).await?;
-    let mut scan = reschr.get(0).ok_or_else(|| "Characteristic not found")?.notify().await?;
-    while let Some(value) = scan.next().await {
-        let mut msg = Map::new();
-        msg.insert("_type".into(), "valueChangedNotification".into());
-        // NEW for Rust
-        msg.insert("subscriptionId".into(), subscription_name.into());
-        // not necessarily an address any more
-        msg.insert("value".into(), value?.into());
-        
-        let _ = write_message(&msg);
-    }
-
-    Ok(())
-}
-
-async fn execute_command(command: &Value, active_scans: Arc<Mutex<HashMap<String, JoinHandle<()>>>>, device_cache: Arc<Mutex<HashMap<String, Device>>>, active_subscriptions: Arc<Mutex<HashMap<String, JoinHandle<()>>>>) -> Result<Value, Box<dyn std::error::Error>> {
+async fn execute_command(
+    command: &Value,
+    central: &Adapter,
+) -> Result<Value, Box<dyn std::error::Error>> {
     match command.get("cmd") {
         Some(Value::String(t)) => match t.as_str() {
             "ping" => {
                 return Ok(Value::String("pong".into()));
             }
             "scan" => {
-                // TODO move to separate function
-                let name = command.get("name")
-                    .and_then(|v| v.as_str())
-                    .ok_or("No name for subscribe command")?
-                    .to_string();
-                let name_clone = name.clone();
-                let service_list: Vec<Uuid> = command.get("serviceList")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str())
-                            .filter_map(|s| Uuid::parse_str(s).ok())
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let handle = tokio::spawn(async move {
-                    let _ = scan_advertisements(&name_clone, service_list, device_cache).await;
-                });
-                let mut active_locked = active_scans.lock().await;
-                active_locked.insert(name, handle);
+                // TODO possibly clear peripheral list if no active connections?
+                // let service_list: Vec<Uuid> = command.get("serviceList")
+                //     .and_then(|v| v.as_array())
+                //     .map(|arr| {
+                //         arr.iter()
+                //             .filter_map(|v| v.as_str())
+                //             .filter_map(|s| Uuid::parse_str(s).ok())
+                //             .collect()
+                //     })
+                //     .unwrap_or_default();
+
+                // we'll ignore the filter for now since the client filters itself
+                // and we don't want to miss peripherals in future cached rounds
+                // also multiple webpages can be using this scan
+                // let scan_filter = ScanFilter { services: service_list };
+
+                // iterate current peripherals
+                // for p in central.peripherals().await.unwrap() {
+                //     let _ = write_peripheral_info(&p).await;
+                // }
+
+                // central.start_scan(scan_filter).await?;
+                central.start_scan(ScanFilter::default()).await?;
                 return Ok(Value::Null);
             }
             "stopScan" => {
-                // TODO move to separate function
-                let name = command.get("name")
-                    .and_then(|v| v.as_str())
-                    .ok_or("No name for subscribe command")?
-                    .to_string();
-                let mut active_locked = active_scans.lock().await;
-                active_locked.remove(&name).ok_or_else(||"Active scan not found")?.abort();
+                central.stop_scan().await?;
                 return Ok(Value::Null);
             }
             "connect" => {
-                let device_string = command.get("address")
-                    .and_then(|v| v.as_str())
-                    .ok_or("No address for connect command")?
-                    .to_string();
-                let device_id = {
-                    let device_cache_ul = device_cache.lock().await;
-                    device_cache_ul
-                        .get(&device_string)
-                        .map(|d| d.clone())
-                        .unwrap()
-                        // .ok_or("Device not found in cache")?
-                };
-                return connect(&device_id).await;
+                let device_id = command["address"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("No address for connect command"))?;
+                for p in central.peripherals().await.unwrap() {
+                    if p.id().to_string() == device_id {
+                        if !p.is_connected().await? {
+                            p.connect().await?;
+                        }
+                        return Ok(Value::String(p.id().to_string()));
+                    }
+                }
+                return Err("Peripheral not found".into());
             }
             "disconnect" => {
-                let device_string = command.get("device")
-                    .and_then(|v| v.as_str())
-                    .ok_or("No device for disconnect command")?
-                    .to_string();
-                let device_id = {
-                    let device_cache_ul = device_cache.lock().await;
-                    device_cache_ul
-                        .get(&device_string)
-                        .map(|d| d.clone())
-                        .ok_or("Device not found in cache")?
-                };
-                return disconnect(&device_id).await;
+                let p = peripheral_from_command_device_string(command, central).await?;
+                if p.is_connected().await? {
+                    p.disconnect().await?;
+                }
+                // TODO terminate any notification streams?
+                return Ok(Value::Null);
             }
             "services" => {
-                let device_string = command.get("device")
+                let p = peripheral_from_command_device_string(command, central).await?;
+
+                let service_uuid_opt = command
+                    .get("service")
                     .and_then(|v| v.as_str())
-                    .ok_or("No device for disconnect command")?
-                    .to_string();
-                let service_uuid = command.get("service").unwrap_or(&Value::Null);
-                let device_id = {
-                    let device_cache_ul = device_cache.lock().await;
-                    device_cache_ul
-                        .get(&device_string)
-                        .map(|d| d.clone())
-                        .ok_or("Device not found in cache")?
-                };
-                return Ok(json!(services(&device_id, service_uuid).await?));
+                    .and_then(|v| Uuid::parse_str(v).ok());
+
+                p.discover_services().await?;
+
+                if let Some(service_uuid) = service_uuid_opt {
+                    let res = p
+                        .services()
+                        .into_iter()
+                        .map(|v| v.uuid)
+                        .filter(|v| v == &service_uuid)
+                        .collect::<Vec<Uuid>>();
+                    if res.len() == 0 {
+                        return Err("Service not found".into());
+                    }
+                    return Ok(json!(res));
+                } else {
+                    let res = p
+                        .services()
+                        .into_iter()
+                        .map(|v| v.uuid)
+                        .collect::<Vec<Uuid>>();
+                    return Ok(json!(res));
+                }
             }
             "characteristics" => {
-                let device_string = command.get("device")
-                    .and_then(|v| v.as_str())
-                    .ok_or("No device for disconnect command")?
-                    .to_string();
-                let service_uuid = command.get("service").ok_or_else(|| "Service required")?;
-                let device_id = {
-                    let device_cache_ul = device_cache.lock().await;
-                    device_cache_ul
-                        .get(&device_string)
-                        .map(|d| d.clone())
-                        .ok_or("Device not found in cache")?
-                };
-                return Ok(characteristics(&device_id, service_uuid).await?);
+                let service = service_from_command_string(command, central, None).await?;
+
+                let res = service.characteristics
+                    .iter()
+                    .map(|v| json!(
+                        {
+                            "uuid": v.uuid,
+                            "properties": {
+                                "broadcast": v.properties.contains(CharPropFlags::BROADCAST),
+                                "read": v.properties.contains(CharPropFlags::READ),
+                                "writeWithoutResponse": v.properties.contains(CharPropFlags::WRITE_WITHOUT_RESPONSE),
+                                "write": v.properties.contains(CharPropFlags::WRITE),
+                                "notify": v.properties.contains(CharPropFlags::NOTIFY),
+                                "indicate": v.properties.contains(CharPropFlags::INDICATE),
+                                "authenticatedSignedWrites": v.properties.contains(CharPropFlags::AUTHENTICATED_SIGNED_WRITES),
+                                "reliableWrite": false, // TODO requires EXTENDED
+                                "writableAuxiliaries": false, // TODO requires EXTENDED
+                            }
+                        }
+                    ))
+                    .collect::<Vec<_>>();
+                return Ok(json!(res));
             }
             "read" => {
-                let device_string = command.get("device")
-                    .and_then(|v| v.as_str())
-                    .ok_or("No device for disconnect command")?
-                    .to_string();
-                let service_uuid = command.get("service").ok_or_else(|| "Service required")?;
-                let char_uuid = command.get("characteristic").ok_or_else(|| "Characteristic required")?;
-                let device_id = {
-                    let device_cache_ul = device_cache.lock().await;
-                    device_cache_ul
-                        .get(&device_string)
-                        .map(|d| d.clone())
-                        .ok_or("Device not found in cache")?
-                };
-                return read(&device_id, service_uuid, char_uuid).await;
+                let p = peripheral_from_command_device_string(command, central).await?;
+                let characteristic =
+                    characteristic_from_command_string(command, central, Some(&p)).await?;
+                let res = p.read(&characteristic).await?;
+                return Ok(json!(res));
             }
-            "write" | "writeWithoutResponse" => {
-                let device_string = command.get("device")
-                    .and_then(|v| v.as_str())
-                    .ok_or("No device for disconnect command")?
-                    .to_string();
-                let service_uuid = command.get("service").ok_or_else(|| "Service required")?;
-                let char_uuid = command.get("characteristic").ok_or_else(|| "Characteristic required")?;
-                let device_id = {
-                    let device_cache_ul = device_cache.lock().await;
-                    device_cache_ul
-                        .get(&device_string)
-                        .map(|d| d.clone())
-                        .ok_or("Device not found in cache")?
-                };
-                let write_val: Vec<u8> = command
-                    .get("value")
-                    .and_then(|v| v.as_array())
-                    .ok_or("value not an array")?
+            "write" | "writeWithoutResponse" | "writeWithResponse" => {
+                let p = peripheral_from_command_device_string(command, central).await?;
+                let characteristic =
+                    characteristic_from_command_string(command, central, Some(&p)).await?;
+                let write_val = command["value"]
+                    .as_array()
+                    .ok_or("Value must be an array")?
                     .iter()
                     .map(|v| {
-                        let n = v.as_u64().ok_or("values must be numbers")?;
-                        u8::try_from(n).map_err(|_| "value items out of range 0-255")
+                        let n = v.as_u64().ok_or("Values must be numbers")?;
+                        u8::try_from(n).map_err(|_| "Value items must be in range 0-255")
                     })
-                    .collect::<Result<_, _>>()?;
-                return write_without_response(&device_id, service_uuid, char_uuid, &write_val).await;
-            }
-            "writeWithResponse" => {
-                let device_string = command.get("device")
-                    .and_then(|v| v.as_str())
-                    .ok_or("No device for disconnect command")?
-                    .to_string();
-                let service_uuid = command.get("service").ok_or_else(|| "Service required")?;
-                let char_uuid = command.get("characteristic").ok_or_else(|| "Characteristic required")?;
-                let device_id = {
-                    let device_cache_ul = device_cache.lock().await;
-                    device_cache_ul
-                        .get(&device_string)
-                        .map(|d| d.clone())
-                        .ok_or("Device not found in cache")?
-                };
-                let write_val: Vec<u8> = command
-                    .get("value")
-                    .and_then(|v| v.as_array())
-                    .ok_or("value not an array")?
-                    .iter()
-                    .map(|v| {
-                        let n = v.as_u64().ok_or("values must be numbers")?;
-                        u8::try_from(n).map_err(|_| "value items out of range 0-255")
-                    })
-                    .collect::<Result<_, _>>()?;
-                return write_with_response(&device_id, service_uuid, char_uuid, &write_val).await;
+                    .collect::<Result<Vec<u8>, _>>()?;
+                let mut write_type = WriteType::WithoutResponse;
+                if command["cmd"] == "writeWithResponse" {
+                    write_type = WriteType::WithResponse;
+                }
+                let res = p.write(&characteristic, &write_val, write_type).await?;
+                return Ok(json!(res));
             }
             "subscribe" => {
-                let mut active_subscriptions_locked = active_subscriptions.lock().await;
-                let device_string = command.get("device")
-                    .and_then(|v| v.as_str())
-                    .ok_or("No device for disconnect command")?
-                    .to_string();
-                let service_uuid = command.get("service").ok_or_else(|| "Service required")?;
-                let char_uuid = command.get("characteristic").ok_or_else(|| "Characteristic required")?;
-                let device_id = {
-                    let device_cache_ul = device_cache.lock().await;
-                    device_cache_ul
-                        .get(&device_string)
-                        .map(|d| d.clone())
-                        .ok_or("Device not found in cache")?
-                };
-                let subscription_name = command.get("subscriptionName")
-                    .and_then(|v| v.as_str())
-                    .ok_or("No subscriptionName for subscribe command")?
-                    .to_string();
-                let subscription_name_clone = subscription_name.clone();
-                let service_uuid_clone = service_uuid.clone();
-                let char_uuid_clone = char_uuid.clone();
-                let handle = tokio::spawn(async move {
-                    let _ = notify_characteristic(&device_id, &service_uuid_clone, &char_uuid_clone, &subscription_name_clone).await;
-                });
-                active_subscriptions_locked.insert(subscription_name.clone(), handle);
-                return Ok(subscription_name.into());
+                let p = peripheral_from_command_device_string(command, central).await?;
+                let characteristic =
+                    characteristic_from_command_string(command, central, Some(&p)).await?;
+                p.subscribe(&characteristic).await?;
+                return Ok(json!(subscription_id_from_characteristic(
+                    characteristic,
+                    &p
+                )));
             }
             "unsubscribe" => {
-                let mut active_subscriptions_locked = active_subscriptions.lock().await; // PROBLEM
-                let subscription_name = command.get("subscriptionName")
-                    .and_then(|v| v.as_str())
-                    .ok_or("No subscriptionName for subscribe command")?
-                    .to_string();
-                active_subscriptions_locked.remove(&subscription_name).ok_or_else(||"Active subscription not found")?.abort();
-                return Ok(subscription_name.into());
+                let p = peripheral_from_command_device_string(command, central).await?;
+                let characteristic =
+                    characteristic_from_command_string(command, central, Some(&p)).await?;
+                p.unsubscribe(&characteristic).await?;
+                return Ok(json!(subscription_id_from_characteristic(
+                    characteristic,
+                    &p
+                )));
             }
-            "accept" => {
-
-            }
-            "acceptPasswordCredential" => {
-
-            }
-            "acceptPin" => {
-
-            }
-            "cancel" => {
-
-            }
-            "availability" => {
-                return check_availability().await;
-            }
-            "getDescriptor" => {
-
+            // the distinction that we lost here is that in the cpp codebase getDescriptor was cached, readDescriptorValue was uncached
+            // btleplug appears not to support setting cached vs uncached descriptor reads
+            "getDescriptor" | "readDescriptorValue" => {
+                let p = peripheral_from_command_device_string(command, central).await?;
+                let d = descriptor_from_command_string(command, central, &p).await?;
+                let val = p.read_descriptor(&d).await?;
+                return Ok(json!({"uuid": d.uuid, "value": val}));
             }
             "getDescriptors" => {
-
-            }
-            "readDescriptorValue" => {
-
+                let p = peripheral_from_command_device_string(command, central).await?;
+                let characteristic =
+                    characteristic_from_command_string(command, central, Some(&p)).await?;
+                let mut res = Vec::new();
+                let mut descriptor_uuid: Option<Uuid> = None;
+                if let Some(descriptor) = command.get("descriptor") {
+                    descriptor_uuid = Some(
+                        descriptor
+                            .as_str()
+                            .and_then(|v| Uuid::parse_str(v).ok())
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "Missing descriptor uuid for descriptor-requiring command"
+                                )
+                            })?,
+                    );
+                }
+                for d in characteristic.descriptors {
+                    let val = p.read_descriptor(&d).await?;
+                    if descriptor_uuid.map_or(true, |uuid| uuid == d.uuid) {
+                        res.push(json!({"uuid": d.uuid, "value": val}));
+                    }
+                }
+                return Ok(json!({"list": res}));
             }
             "writeDescriptorValue" => {
-
+                let p = peripheral_from_command_device_string(command, central).await?;
+                let d = descriptor_from_command_string(command, central, &p).await?;
+                let write_val = command["value"]
+                    .as_array()
+                    .ok_or("Value must be an array")?
+                    .iter()
+                    .map(|v| {
+                        let n = v.as_u64().ok_or("Values must be numbers")?;
+                        u8::try_from(n).map_err(|_| "Value items must be in range 0-255")
+                    })
+                    .collect::<Result<Vec<u8>, _>>()?;
+                let val = p.write_descriptor(&d, &write_val).await?;
+                return Ok(json!({"uuid": d.uuid, "value": val}));
             }
-            _ => {
-                
-            }
-        }
+            // omitted pairing related functions since btleplug doesn't handle pairing
+            _ => {}
+        },
         Some(_) => {
             // doing nothing, handled externally
         }
@@ -372,197 +284,226 @@ async fn execute_command(command: &Value, active_scans: Arc<Mutex<HashMap<String
             // doing nothing, handled externally
         }
     }
+
     Err("Command not found".into())
 }
 
-async fn check_availability() -> Result<Value, Box<dyn std::error::Error>> {
-    let adapter = Adapter::default().await;
-    match adapter {
-        Ok(_) => {
-            return Ok(Value::Bool(true));
+fn subscription_id_from_characteristic_uuids(
+    characteristic_uuid: Uuid,
+    service_uuid: Uuid,
+    peripheral: &btleplug::platform::Peripheral,
+) -> String {
+    format!(
+        "subscription_{}_{}_{}",
+        peripheral.id(),
+        service_uuid,
+        characteristic_uuid
+    )
+}
+
+fn subscription_id_from_characteristic(
+    characteristic: btleplug::api::Characteristic,
+    peripheral: &btleplug::platform::Peripheral,
+) -> String {
+    subscription_id_from_characteristic_uuids(
+        characteristic.uuid,
+        characteristic.service_uuid,
+        peripheral,
+    )
+}
+
+async fn peripheral_from_command_device_string(
+    command: &Value,
+    central: &Adapter,
+) -> Result<btleplug::platform::Peripheral> {
+    let device_id = command["device"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("No address for connect command"))?;
+    for p in central.peripherals().await.unwrap() {
+        if p.id().to_string() == device_id {
+            return Ok(p);
         }
-        Err(_) => {
-            return Ok(Value::Bool(false));
+    }
+    Err(anyhow::anyhow!("Peripheral not found"))
+}
+
+async fn service_from_command_string(
+    command: &Value,
+    central: &Adapter,
+    peripheral: Option<&btleplug::platform::Peripheral>,
+) -> Result<btleplug::api::Service> {
+    let p_owned = match peripheral {
+        Some(p) => p.clone(),
+        None => peripheral_from_command_device_string(command, central).await?,
+    };
+    let service_uuid = command["service"]
+        .as_str()
+        .and_then(|v| Uuid::parse_str(v).ok())
+        .ok_or_else(|| anyhow::anyhow!("Missing service uuid for service-requiring command"))?;
+    let services = p_owned.services();
+    let service = services
+        .into_iter()
+        .find(|s| s.uuid == service_uuid)
+        .ok_or_else(|| anyhow::anyhow!("Unable to find service with this uuid"))?;
+    Ok(service)
+}
+
+async fn characteristic_from_command_string(
+    command: &Value,
+    central: &Adapter,
+    peripheral: Option<&btleplug::platform::Peripheral>,
+) -> Result<btleplug::api::Characteristic> {
+    let service = service_from_command_string(command, central, peripheral).await?;
+    let characteristic_uuid = command["characteristic"]
+        .as_str()
+        .and_then(|v| Uuid::parse_str(v).ok())
+        .ok_or_else(|| {
+            anyhow::anyhow!("Missing service uuid for characteristic-requiring command")
+        })?;
+    let characteristic = service
+        .characteristics
+        .into_iter()
+        .find(|v| v.uuid == characteristic_uuid)
+        .ok_or_else(|| anyhow::anyhow!("Unable to find characteristic with this uuid"))?;
+    Ok(characteristic)
+}
+
+async fn descriptor_from_command_string(
+    command: &Value,
+    central: &Adapter,
+    peripheral: &btleplug::platform::Peripheral,
+) -> Result<btleplug::api::Descriptor> {
+    let characteristic =
+        characteristic_from_command_string(command, central, Some(&peripheral)).await?;
+    let descriptor_uuid = command["descriptor"]
+        .as_str()
+        .and_then(|v| Uuid::parse_str(v).ok())
+        .ok_or_else(|| {
+            anyhow::anyhow!("Missing descriptor uuid for descriptor-requiring command")
+        })?;
+    let descriptor = characteristic
+        .descriptors
+        .into_iter()
+        .find(|v| v.uuid == descriptor_uuid)
+        .ok_or_else(|| anyhow::anyhow!("Unable to find descriptor with this uuid"))?;
+    Ok(descriptor)
+}
+
+async fn notification_thread(peripheral: btleplug::platform::Peripheral) {
+    while let Some(event) = peripheral.notifications().await.unwrap().next().await {
+        let res = json!({"_type": "valueChangedNotification", "subscriptionId": subscription_id_from_characteristic_uuids(event.uuid, event.service_uuid, &peripheral), "value": event.value});
+        let _ = write_message(&res);
+    }
+}
+
+async fn event_thread(
+    mut events: Pin<Box<dyn Stream<Item = CentralEvent> + Send>>,
+    central: Adapter,
+) -> anyhow::Result<()> {
+    while let Some(event) = events.next().await {
+        match event {
+            CentralEvent::DeviceDiscovered(id)
+            | CentralEvent::DeviceUpdated(id)
+            | CentralEvent::DeviceServicesModified(id)
+            | CentralEvent::ManufacturerDataAdvertisement { id, .. }
+            | CentralEvent::ServiceDataAdvertisement { id, .. }
+            | CentralEvent::ServicesAdvertisement { id, .. }
+            | CentralEvent::RssiUpdate { id, .. } => {
+                let Ok(peripheral) = central.peripheral(&id).await else {
+                    continue;
+                };
+                let _ = write_peripheral_info(&peripheral).await;
+            }
+            // TODO do we need to register/track this at other locations, such as for devices connected before startup?
+            CentralEvent::DeviceConnected(id) => {
+                for p in central.peripherals().await.unwrap() {
+                    if p.id() == id {
+                        std::thread::spawn(move || {
+                            futures_lite::future::block_on(notification_thread(p))
+                        });
+                    }
+                }
+            }
+            // no need to drop the device notification stream, it is supported across connections
+            CentralEvent::DeviceDisconnected(id) => {
+                let _ =
+                    write_message(&json!({"_type": "disconnectEvent", "device": id.to_string()}));
+            }
+            // nothing to do here really
+            CentralEvent::StateUpdate(_state) => {}
         }
     }
+    Ok(())
 }
 
-async fn device_event(device: &Device) {
-    // we are assuming at most one disconnection here, so the thread will terminate after that
-    let adapter = Adapter::default().await.expect("Adapter required to scan");
-    let mut dev_event_stream = adapter.device_connection_events(device).await.unwrap();
-    while let Some(dev_event) = dev_event_stream.next().await {
-        if let ConnectionEvent::Disconnected = dev_event {
-            let msg = json!({"_type": "disconnectEvent", "device": device.id().to_string()});
-            let _ = write_message(&msg);
-            let _ = disconnect(&device).await;
-            break;
-        }
-    }
-    // TODO do disconnect cleanup also
+// event thread for CentralEvents
+async fn get_central(manager: &btleplug::platform::Manager) -> Option<Adapter> {
+    let adapters = manager.adapters().await.ok()?;
+    adapters.into_iter().next()
 }
-
-async fn connect(dev: &Device) -> Result<Value, Box<dyn std::error::Error>> {
-    let adapter = Adapter::default().await?;
-    adapter.wait_available().await?;
-    if !(dev.is_connected().await) {
-        let dev_clone = dev.clone();
-        tokio::spawn(async move {
-            device_event(&dev_clone).await;
-        });
-        adapter.connect_device(&dev).await?;
-    }
-    // On Windows you don't really connect until you do something with the device
-    // this is a bit slow though
-    // if cfg!(windows) {
-    dev.discover_services_with_uuid(Uuid::from_u128(0x1799)).await?;
-    // }
-    Ok(Value::String(dev.id().to_string()))
-}
-
-async fn disconnect(dev: &Device) -> Result<Value, Box<dyn std::error::Error>> {
-    let adapter = Adapter::default().await?;
-    adapter.wait_available().await?;
-    if dev.is_connected().await {
-        adapter.disconnect_device(&dev).await?;
-    }
-    // TODO terminate any notification streams
-    Ok(Value::Null)
-}
-
-async fn services(dev: &Device, service: &Value) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    let adapter = Adapter::default().await?;
-    adapter.wait_available().await?;
-    if service != &Value::Null {
-        let service_uuid_str = service.as_str().ok_or_else(|| "Service string not available")?;
-        let service_uuid = Uuid::parse_str(service_uuid_str)?;
-        let res = dev.discover_services_with_uuid(service_uuid).await?
-            .into_iter()
-            // TODO check this on Linux
-            .map(|v| v.uuid().to_string())
-            .collect::<Vec<String>>();
-        return Ok(res);
-    } else {
-        let res = dev.discover_services().await?
-            .into_iter()
-            .map(|v| v.uuid().to_string())
-            .collect::<Vec<String>>();
-        return Ok(res);
-    }
-}
-
-async fn characteristics(dev: &Device, service: &Value) -> Result<Value, Box<dyn std::error::Error>> {
-    let adapter = Adapter::default().await?;
-    adapter.wait_available().await?;
-    let service_uuid_str = service.as_str().ok_or_else(|| "Service string not available")?;
-    let service_uuid = Uuid::parse_str(service_uuid_str)?;
-    let services = dev.discover_services_with_uuid(service_uuid).await?;
-    let res = services.get(0).ok_or_else(|| "Service not available")?;
-    let reschr = res.discover_characteristics().await?;
-    let mut charval = Vec::new();
-    for f in reschr.iter() {
-        let f_props = f.properties().await?;
-        let f_uuid = f.uuid().to_string();
-        charval.push(json!({"uuid": f_uuid, "properties": {
-            "broadcast": f_props.broadcast,
-            "read": f_props.read,
-            "writeWithoutResponse": f_props.write_without_response,
-            "write": f_props.write,
-            "notify": f_props.notify,
-            "indicate": f_props.indicate,
-            "authenticatedSignedWrites": f_props.authenticated_signed_writes,
-            "reliableWrite": f_props.reliable_write,
-            "writableAuxiliaries": f_props.writable_auxiliaries
-            // also available but not included: extended_properties
-        }}));
-    }
-    Ok(Value::Array(charval))
-}
-
-async fn read(dev: &Device, service: &Value, characteristic: &Value) -> Result<Value, Box<dyn std::error::Error>> {
-    let adapter = Adapter::default().await?;
-    adapter.wait_available().await?;
-    let service_uuid_str = service.as_str().ok_or_else(|| "Service string not available")?;
-    let service_uuid = Uuid::parse_str(service_uuid_str)?;
-    let services = dev.discover_services_with_uuid(service_uuid).await?;
-    let res = services.get(0).ok_or_else(|| "Service not available")?;
-    let reschr = res.discover_characteristics_with_uuid(Uuid::parse_str(characteristic.as_str().ok_or_else(|| "Characteristic not available")?)?).await?;
-    Ok(json!(reschr.get(0).ok_or_else(|| "Characteristic not available")?.read().await?))
-}
-
-async fn write_without_response(dev: &Device, service: &Value, characteristic: &Value, write_val: &[u8]) -> Result<Value, Box<dyn std::error::Error>> {
-    let adapter = Adapter::default().await?;
-    adapter.wait_available().await?;
-    let service_uuid_str = service.as_str().ok_or_else(|| "Service string not available")?;
-    let service_uuid = Uuid::parse_str(service_uuid_str)
-        .map_err(|e| format!("Invalid service UUID '{}': {}", service_uuid_str, e))?;
-
-    let services = dev.discover_services_with_uuid(service_uuid).await
-        .map_err(|e| format!("discover_services_with_uuid failed: {}", e))?;
-    let res = services.get(0).ok_or_else(|| "Service not available")?;
-
-    let char_str = characteristic.as_str().ok_or_else(|| "Characteristic not available")?;
-    let char_uuid = Uuid::parse_str(char_str)
-        .map_err(|e| format!("Invalid characteristic UUID '{}': {}", char_str, e))?;
-
-    let reschr = res.discover_characteristics_with_uuid(char_uuid).await
-        .map_err(|e| format!("discover_characteristics_with_uuid failed: {}", e))?;
-
-    Ok(json!(reschr.get(0).ok_or_else(|| "Characteristic not available")?.write_without_response(write_val).await?))
-}
-
-async fn write_with_response(dev: &Device, service: &Value, characteristic: &Value, write_val: &[u8]) -> Result<Value, Box<dyn std::error::Error>> {
-    let adapter = Adapter::default().await?;
-    adapter.wait_available().await?;
-    let service_uuid_str = service.as_str().ok_or_else(|| "Service string not available")?;
-    let service_uuid = Uuid::parse_str(service_uuid_str)
-        .map_err(|e| format!("Invalid service UUID '{}': {}", service_uuid_str, e))?;
-
-    let services = dev.discover_services_with_uuid(service_uuid).await
-        .map_err(|e| format!("discover_services_with_uuid failed: {}", e))?;
-    let res = services.get(0).ok_or_else(|| "Service not available")?;
-
-    let char_str = characteristic.as_str().ok_or_else(|| "Characteristic not available")?;
-    let char_uuid = Uuid::parse_str(char_str)
-        .map_err(|e| format!("Invalid characteristic UUID '{}': {}", char_str, e))?;
-
-    let reschr = res.discover_characteristics_with_uuid(char_uuid).await
-        .map_err(|e| format!("discover_characteristics_with_uuid failed: {}", e))?;
-
-    Ok(json!(reschr.get(0).ok_or_else(|| "Characteristic not available")?.write(write_val).await?))
-}
-
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     let instance = SingleInstance::new("BLEServer").unwrap();
-    assert!(instance.is_single(), "Only one instance of WebBT Server is allowed at a time.");
+    assert!(
+        instance.is_single(),
+        "Only one instance of WebBT Server is allowed at a time."
+    );
 
     // tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-    unsafe {
-        std::env::set_var("RUST_BACKTRACE", "1");
+
+    let manager = btleplug::platform::Manager::new().await?;
+    // currently this just uses the first adapter, a possible future expansion would be to allow selecting an adapter in the UI
+    // the Web Bluetooth spec doesn't seem to handle multiple adapters, and btleplug only supports multiple adapters on Linux
+    let central = get_central(&manager).await;
+
+    // only start the events thread if we have an adapter
+    // just one thread for device/advertisement events
+    if let Some(ref c) = central {
+        let events = c.events().await?;
+        let central_clone = c.clone();
+        std::thread::spawn(move || {
+            futures_lite::future::block_on(event_thread(events, central_clone))
+        });
     }
 
-    let active_scans = Arc::new(Mutex::new(HashMap::new()));
-    let device_cache = Arc::new(Mutex::new(HashMap::new()));
-    let active_subscriptions = Arc::new(Mutex::new(HashMap::new()));
-
-    let mut msg = Map::new();
-    msg.insert("_type".into(), "Start".into());
-    // API version is required and will be incremented when breaking changes are made to the API
-    msg.insert("apiVersion".into(), API_VERSION.into());
-    // the following two values are not currently validated but may be used in the future to determine whether to offer users an update to BLEServer
-    // third-party server implementations should change these values for their servers
-    msg.insert("serverName".into(), "rust-server".into());
-    msg.insert("serverVersion".into(), "0.6.0".into());
-    msg.insert("features".into(), ["ServerMultiScanningInstance"].into());
+    let msg = json!({"_type": "Start", "apiVersion": API_VERSION, "serverName": "rust-server", "serverVersion": "0.6.0"});
 
     let _ = write_message(&msg);
 
     loop {
         match read_message::<Value>() {
             Ok(message) => {
-                let _ = tokio::spawn(process_command(message, active_scans.clone(), device_cache.clone(), active_subscriptions.clone())).await;
+                // respond to availability without requiring an Adapter
+                if message.get("cmd").and_then(|v| v.as_str()) == Some("availability") {
+                    let avail = central.is_some();
+                    let mut response = Map::new();
+                    response.insert("_type".into(), "response".into());
+                    let cmd_id = message.get("_id").and_then(|v| v.as_i64()).unwrap_or(-1);
+                    response.insert("_id".into(), cmd_id.into());
+                    response.insert("result".into(), json!(avail));
+                    let _ = write_message(&response);
+                    continue;
+                }
+
+                // for other commands, require an adapter
+                if let Some(ref c) = central {
+                    let central_for_task = c.clone();
+                    tokio::spawn(async move {
+                        process_command(message, &central_for_task).await;
+                    });
+                } else {
+                    let mut response = Map::new();
+                    response.insert("_type".into(), "response".into());
+                    let cmd_id = message.get("_id").and_then(|v| v.as_i64()).unwrap_or(-1);
+                    response.insert("_id".into(), cmd_id.into());
+                    response.insert("result".into(), Value::Null);
+                    response.insert(
+                        "error".into(),
+                        Value::String("No Bluetooth adapter available".into()),
+                    );
+                    let _ = write_message(&response);
+                }
             }
             Err(e) => {
                 match e {
@@ -581,5 +522,7 @@ async fn main() {
                 }
             }
         }
-    } 
+    }
+
+    Ok(())
 }
