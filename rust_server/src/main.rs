@@ -27,9 +27,9 @@ async fn write_peripheral_info(peripheral: &btleplug::platform::Peripheral) -> a
         .context("No peripheral properties")?;
     let msg = json!({
         "_type": "scanResult",
-        "bluetoothAddress": properties.address.to_string(),
+        "bluetoothAddress": peripheral.id().to_string(),
         "rssi": properties.rssi.map(|r| json!(r)).unwrap_or(Value::Null),
-        "localName": properties.local_name.unwrap_or_else(|| properties.address.to_string()),
+        "localName": properties.local_name.unwrap_or_else(|| peripheral.id().to_string()),
         // no appearance
         "txPower": properties.tx_power_level.map(|p| json!(p)).unwrap_or(Value::Null),
         "serviceUuids": properties.services,
@@ -111,14 +111,7 @@ async fn execute_command(
                     .as_str()
                     .ok_or_else(|| anyhow::anyhow!("No address for connect command"))?;
                 for p in central.peripherals().await.unwrap() {
-                    let device_matches = p.id().to_string() == device_id
-                        || p.properties()
-                            .await
-                            .ok()
-                            .flatten()
-                            .map(|properties| properties.address.to_string() == device_id)
-                            .unwrap_or(false);
-                    if device_matches {
+                    if p.id().to_string() == device_id {
                         if !p.is_connected().await? {
                             p.connect().await?;
                         }
