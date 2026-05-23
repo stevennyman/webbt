@@ -36,6 +36,8 @@ for i in range(3):
     additionalcharacteristics = ''
     if varnames[i] == 'CHARACTERISTICS':
         additionalcharacteristics = ",\n    // the following were renamed in or removed from the spec but Chrome still ships them\n    'gap.central_address_resolution_support': 0x2AA6,\n    'local_east_coordinate.xml': 0x2AB1,\n    analog: 0x2A58,\n    digital: 0x2A56,\n    two_zone_heart_rate_limit: 0x2A95,\n    magnetic_flux_density_2D: 0x2AA0,\n    magnetic_flux_density_3D: 0x2AA1"
+    elif varnames[i] == 'SERVICES':
+        additionalcharacteristics = ",\n    // the following were renamed in or removed from the spec but Chrome still ships them\n    generic_access: 0x1800"
 
     # convert the JSON format to a JS file format
     result = result+dumps(dict(sorted(itemsout.items()))).replace('"', '').replace(',', ",\n   ").replace('{', '{\n    ').replace('}', additionalcharacteristics+',\n}').replace('\\', '')+';\n'
