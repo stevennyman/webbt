@@ -10,7 +10,11 @@ use futures_lite::Stream;
 use futures_lite::stream::StreamExt;
 use serde_json::{Map, Value, json};
 use single_instance::SingleInstance;
+use std::collections::HashSet;
+use std::future::Future;
 use std::pin::Pin;
+use std::sync::{Mutex, OnceLock};
+use tokio::time::sleep;
 use uuid::Uuid;
 use webextension_native_messaging::{read_message, write_message};
 
@@ -37,7 +41,7 @@ async fn write_peripheral_info(peripheral: &btleplug::platform::Peripheral) -> a
             .iter()
             .map(|(uuid, data)| json!({"service": uuid, "data": data}))
             .collect::<Vec<_>>(),
-        "gattId": peripheral.id(),
+        "gattId": peripheral.id().to_string(),
         // not used: class (class of device), advertisement_name, address_type
     });
     let _ = write_message(&msg);
@@ -107,7 +111,14 @@ async fn execute_command(
                     .as_str()
                     .ok_or_else(|| anyhow::anyhow!("No address for connect command"))?;
                 for p in central.peripherals().await.unwrap() {
-                    if p.id().to_string() == device_id {
+                    let device_matches = p.id().to_string() == device_id
+                        || p.properties()
+                            .await
+                            .ok()
+                            .flatten()
+                            .map(|properties| properties.address.to_string() == device_id)
+                            .unwrap_or(false);
+                    if device_matches {
                         if !p.is_connected().await? {
                             p.connect().await?;
                         }
@@ -312,6 +323,35 @@ fn subscription_id_from_characteristic(
     )
 }
 
+fn notification_threads() -> &'static Mutex<HashSet<String>> {
+    static NOTIFICATION_THREADS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    NOTIFICATION_THREADS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn start_notification_thread(peripheral: btleplug::platform::Peripheral) {
+    let peripheral_id = peripheral.id().to_string();
+    {
+        let mut active_threads = notification_threads().lock().unwrap();
+        if !active_threads.insert(peripheral_id.clone()) {
+            return;
+        }
+    }
+
+    spawn_tokio_thread(async move {
+        let mut retry_count = 0;
+        loop {
+            notification_thread(peripheral.clone()).await;
+            retry_count += 1;
+            if retry_count >= 3 {
+                break;
+            }
+            sleep(std::time::Duration::from_millis(100)).await;
+        }
+        let mut active_threads = notification_threads().lock().unwrap();
+        active_threads.remove(&peripheral_id);
+    });
+}
+
 async fn peripheral_from_command_device_string(
     command: &Value,
     central: &Adapter,
@@ -340,6 +380,7 @@ async fn service_from_command_string(
         .as_str()
         .and_then(|v| Uuid::parse_str(v).ok())
         .ok_or_else(|| anyhow::anyhow!("Missing service uuid for service-requiring command"))?;
+    p_owned.discover_services().await?;
     let services = p_owned.services();
     let service = services
         .into_iter()
@@ -418,9 +459,7 @@ async fn event_thread(
             CentralEvent::DeviceConnected(id) => {
                 for p in central.peripherals().await.unwrap() {
                     if p.id() == id {
-                        std::thread::spawn(move || {
-                            futures_lite::future::block_on(notification_thread(p))
-                        });
+                        start_notification_thread(p);
                     }
                 }
             }
@@ -434,6 +473,19 @@ async fn event_thread(
         }
     }
     Ok(())
+}
+
+fn spawn_tokio_thread<F>(future: F)
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("Failed to create Tokio runtime");
+        runtime.block_on(future);
+    });
 }
 
 // event thread for CentralEvents
@@ -462,8 +514,8 @@ async fn main() -> anyhow::Result<()> {
     if let Some(ref c) = central {
         let events = c.events().await?;
         let central_clone = c.clone();
-        std::thread::spawn(move || {
-            futures_lite::future::block_on(event_thread(events, central_clone))
+        spawn_tokio_thread(async move {
+            let _ = event_thread(events, central_clone).await;
         });
     }
 

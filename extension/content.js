@@ -330,7 +330,7 @@ class DeviceChooserUI {
             deviceElement.addEventListener('click', () => this.selectDevice(address, deviceElement, gattId));
             deviceElement.addEventListener('keydown', e => {
                 if (e.keyCode === 13 || e.keyCode === 32) {
-                    this.selectDevice(address, deviceElement);
+                    this.selectDevice(address, deviceElement, gattId);
                 }
             });
             this.deviceListElement.appendChild(deviceElement);

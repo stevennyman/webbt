@@ -655,8 +655,12 @@ async function gattConnect(port, webId) {
         throw new Error('Unknown device address');
     }
 
+    const storedGattId = await webIdToGattId(webId, port);
+    const connectId = serverApiVersion === 2 && typeof storedGattId === 'string'
+        ? storedGattId
+        : address.replace(/:/g, '');
     const gattId = await nativeRequest('connect', {
-        address: serverApiVersion === 2 ? address : address.replace(/:/g, ''),
+        address: connectId,
     }, port);
     if (gattId != null) {
         if (!(port.sender.origin in webIdToGattIdMap)) {
