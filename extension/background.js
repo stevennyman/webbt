@@ -12,8 +12,6 @@ let nativePort = null;
 let listeners = {};
 let listenercnts = {};
 
-let portCnts = {};
-
 const COOLDOWN_MS = 30* 1000;
 let lastInfoTab = 0;
 let infoTabId = null;
@@ -164,6 +162,44 @@ browser.browserAction.onClicked.addListener(() => browser.runtime.openOptionsPag
 const portsObjects = new Map();
 const subscriptionOrigins = {};
 const characteristicCache = {};
+
+function trackOriginSubscription(origin, gattId, service, characteristic, port) {
+    const list = (subscriptionOrigins[origin] ??= []);
+    const exists = list.some(
+        ([id, svc, char, prt]) => id === gattId && svc === service && char === characteristic && prt === port,
+    );
+    if (!exists) {
+        list.push([gattId, service, characteristic, port]);
+    }
+}
+
+function untrackOriginSubscription(origin, gattId, service, characteristic, port) {
+    const list = subscriptionOrigins[origin];
+    if (!list) {
+        return;
+    }
+    const index = list.findIndex(
+        ([id, svc, char, prt]) => id === gattId && svc === service && char === characteristic && prt === port,
+    );
+    if (index > -1) {
+        list.splice(index, 1);
+    }
+    if (!list.length) {
+        delete subscriptionOrigins[origin];
+    }
+}
+
+function removePortFromSubscriptionOrigins(port) {
+    const origin = port.sender.origin;
+    const list = subscriptionOrigins[origin];
+    if (!list) {
+        return;
+    }
+    subscriptionOrigins[origin] = list.filter(([, , , prt]) => prt !== port);
+    if (!subscriptionOrigins[origin].length) {
+        delete subscriptionOrigins[origin];
+    }
+}
 
 function nativePortOnDisconnect(port) {
     nativeResolve();
@@ -814,12 +850,14 @@ async function writeValueWithoutResponse(port, webId, service, characteristic, v
 
 async function startNotifications(port, webId, service, characteristic) {
     let gattId = await webIdToGattId(webId, port);
+    trackOriginSubscription(port.sender.origin, gattId, service, characteristic, port);
+    // Rust (API v2) server must return subscriptionNames in this format
     const subscriptionName =
         'subscription_'+gattId+'_'+windowsServiceUuid(service)+'_'+
         windowsCharacteristicUuid(characteristic);
-    portCnts[subscriptionName] = (portCnts[subscriptionName] || 0) + 1;
     // already notifying for this port
-    if (portCnts[subscriptionName] != 1 && serverApiVersion === 2) {
+    if (subscriptions[subscriptionName] && subscriptions[subscriptionName].size && serverApiVersion === 2) {
+        subscriptions[subscriptionName].add(port);
         return subscriptionName;
     }
     const subscriptionId = await nativeRequest('subscribe', {
@@ -833,9 +871,6 @@ async function startNotifications(port, webId, service, characteristic) {
         subscriptions[subscriptionId] = new Set();
     }
     subscriptions[subscriptionId].add(port);
-
-    ((subscriptionOrigins[port.sender.origin] ??= {})[gattId] ??= []).push([service, characteristic, port]);
-    // portsObjects.get(port).subscriptions.add(subscriptionId);
     return subscriptionId;
 }
 
@@ -845,8 +880,9 @@ async function stopNotifications(port, webId, service, characteristic) {
     const subscriptionName =
         'subscription_'+gattId+'_'+windowsServiceUuid(service)+'_'+
         windowsCharacteristicUuid(characteristic);
-    portCnts[subscriptionName] = portCnts[subscriptionName] - 1;
-    if (portCnts[subscriptionName] != 0) {
+    if (subscriptions[subscriptionName] && subscriptions[subscriptionName].size != 1 && serverApiVersion === 2) {
+        subscriptions[subscriptionName].delete(port);
+        untrackOriginSubscription(port.sender.origin, gattId, service, characteristic, port);
         return subscriptionName;
     }
     if (nativePort && !(nativePort.error)) {
@@ -857,21 +893,15 @@ async function stopNotifications(port, webId, service, characteristic) {
         }, port);
     }
 
-    subscriptions[subscriptionId].delete(port);
-    if (!subscriptions[subscriptionId].size) {
-        delete subscriptions[subscriptionId];
+    if (subscriptionId && subscriptions[subscriptionId]) {
+        subscriptions[subscriptionId].delete(port);
+        if (!subscriptions[subscriptionId].size) {
+            delete subscriptions[subscriptionId];
+        }
     }
 
-    // remove subscriptionOrigins entry and clean up empty keys if needed
-    const originSubscriptions = subscriptionOrigins[port.sender.origin][gattId];
-    const index = originSubscriptions.findIndex(
-        ([svc, char, prt]) => svc === service && char === characteristic && prt === port,
-    );
-    if (index > -1) originSubscriptions.splice(index, 1);
-    if (!originSubscriptions.length) delete subscriptionOrigins[port.sender.origin][gattId];
-    if (!Object.keys(subscriptionOrigins[port.sender.origin]).length) delete subscriptionOrigins[port.sender.origin];
+    untrackOriginSubscription(port.sender.origin, gattId, service, characteristic, port);
 
-    // portsObjects.get(port).subscriptions.delete(subscriptionId);
     return subscriptionId;
 }
 
@@ -995,12 +1025,9 @@ async function forgetDevice(port, webId, origin = null) {
 
     // also remove from subscriptions
     if (desiredOrigin in subscriptionOrigins) {
-        for (const possibleAddress of Object.keys(subscriptionOrigins[desiredOrigin])) {
-            if (possibleAddress.endsWith(address)) {
-                const subList = subscriptionOrigins[desiredOrigin][possibleAddress];
-                for (const elem of subList) {
-                    await stopNotifications(elem[2], webId, elem[0], elem[1]);
-                }
+        for (const [gattId, service, characteristic, subPort] of [...subscriptionOrigins[desiredOrigin]]) {
+            if (typeof gattId === 'string' && gattId.endsWith(address)) {
+                await stopNotifications(subPort, webId, service, characteristic);
             }
         }
     }
@@ -1106,6 +1133,7 @@ chrome.runtime.onConnect.addListener((port) => {
         for (const value of Object.values(subscriptions)) {
             value.delete(port);
         }
+        removePortFromSubscriptionOrigins(port);
 
         // close the dedicated host process if nothing else is using it
         if (port.sender.url != browser.runtime.getURL('options.html')) {
