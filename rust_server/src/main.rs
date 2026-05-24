@@ -11,7 +11,6 @@ use futures_lite::stream::StreamExt;
 use serde_json::{Map, Value, json};
 use single_instance::SingleInstance;
 use std::collections::HashSet;
-use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Mutex, OnceLock};
 use tokio::time::sleep;
@@ -213,6 +212,7 @@ async fn execute_command(
                 let p = peripheral_from_command_device_string(command, central).await?;
                 let characteristic =
                     characteristic_from_command_string(command, central, Some(&p)).await?;
+                start_notification_thread(p.clone());
                 p.subscribe(&characteristic).await?;
                 return Ok(json!(subscription_id_from_characteristic(
                     characteristic,
@@ -330,7 +330,7 @@ fn start_notification_thread(peripheral: btleplug::platform::Peripheral) {
         }
     }
 
-    spawn_tokio_thread(async move {
+    tokio::spawn(async move {
         let mut retry_count = 0;
         loop {
             notification_thread(peripheral.clone()).await;
@@ -424,8 +424,19 @@ async fn descriptor_from_command_string(
 }
 
 async fn notification_thread(peripheral: btleplug::platform::Peripheral) {
-    while let Some(event) = peripheral.notifications().await.unwrap().next().await {
-        let res = json!({"_type": "valueChangedNotification", "subscriptionId": subscription_id_from_characteristic_uuids(event.uuid, event.service_uuid, &peripheral), "value": event.value});
+    let mut notifications = peripheral.notifications().await.unwrap();
+
+    while let Some(event) = notifications.next().await {
+        let res = json!({
+            "_type": "valueChangedNotification",
+            "subscriptionId": subscription_id_from_characteristic_uuids(
+                event.uuid,
+                event.service_uuid,
+                &peripheral
+            ),
+            "value": event.value
+        });
+
         let _ = write_message(&res);
     }
 }
@@ -468,19 +479,6 @@ async fn event_thread(
     Ok(())
 }
 
-fn spawn_tokio_thread<F>(future: F)
-where
-    F: Future<Output = ()> + Send + 'static,
-{
-    std::thread::spawn(move || {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("Failed to create Tokio runtime");
-        runtime.block_on(future);
-    });
-}
-
 // event thread for CentralEvents
 async fn get_central(manager: &btleplug::platform::Manager) -> Option<Adapter> {
     let adapters = manager.adapters().await.ok()?;
@@ -507,7 +505,7 @@ async fn main() -> anyhow::Result<()> {
     if let Some(ref c) = central {
         let events = c.events().await?;
         let central_clone = c.clone();
-        spawn_tokio_thread(async move {
+        tokio::spawn(async move {
             let _ = event_thread(events, central_clone).await;
         });
     }
