@@ -10,14 +10,26 @@ use futures_lite::Stream;
 use futures_lite::stream::StreamExt;
 use serde_json::{Map, Value, json};
 use single_instance::SingleInstance;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
-use std::sync::{Mutex, OnceLock};
-use tokio::time::sleep;
+use std::sync::{Arc, Mutex, OnceLock};
+use tokio::sync::Semaphore;
 use uuid::Uuid;
 use webextension_native_messaging::{read_message, write_message};
 
 const API_VERSION: i32 = 2;
+
+fn device_semaphores() -> &'static Mutex<HashMap<String, Arc<Semaphore>>> {
+    static SEMAPHORES: OnceLock<Mutex<HashMap<String, Arc<Semaphore>>>> = OnceLock::new();
+    SEMAPHORES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn get_device_semaphore(device_id: &str) -> Arc<Semaphore> {
+    let mut sems = device_semaphores().lock().unwrap();
+    sems.entry(device_id.to_string())
+        .or_insert_with(|| Arc::new(Semaphore::new(1)))
+        .clone()
+}
 
 async fn write_peripheral_info(peripheral: &btleplug::platform::Peripheral) -> anyhow::Result<()> {
     let properties = peripheral
@@ -53,7 +65,23 @@ async fn process_command(command: Value, central: &Adapter) {
     let cmd_id = command.get("_id").and_then(|v| v.as_i64()).unwrap_or(-1);
     response.insert("_id".into(), cmd_id.into());
 
-    match execute_command(&command, &central).await {
+    let device_id = command
+        .get("device")
+        .or_else(|| command.get("address"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let execute_fut = async {
+        if let Some(ref id) = device_id {
+            let semaphore = get_device_semaphore(id);
+            let _permit = semaphore.acquire().await.unwrap();
+            execute_command(&command, &central).await
+        } else {
+            execute_command(&command, &central).await
+        }
+    };
+
+    match execute_fut.await {
         Ok(result) => {
             response.insert("result".into(), result);
         }
@@ -321,6 +349,18 @@ fn notification_threads() -> &'static Mutex<HashSet<String>> {
     NOTIFICATION_THREADS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
+struct ThreadGuard {
+    peripheral_id: String,
+}
+
+impl Drop for ThreadGuard {
+    fn drop(&mut self) {
+        if let Ok(mut active_threads) = notification_threads().lock() {
+            active_threads.remove(&self.peripheral_id);
+        }
+    }
+}
+
 fn start_notification_thread(peripheral: btleplug::platform::Peripheral) {
     let peripheral_id = peripheral.id().to_string();
     {
@@ -331,17 +371,12 @@ fn start_notification_thread(peripheral: btleplug::platform::Peripheral) {
     }
 
     tokio::spawn(async move {
-        let mut retry_count = 0;
-        loop {
-            notification_thread(peripheral.clone()).await;
-            retry_count += 1;
-            if retry_count >= 3 {
-                break;
-            }
-            sleep(std::time::Duration::from_millis(100)).await;
+        let _guard = ThreadGuard {
+            peripheral_id: peripheral_id.clone(),
+        };
+        if let Err(e) = notification_thread(peripheral).await {
+            eprintln!("Notification thread error for {}: {:?}", peripheral_id, e);
         }
-        let mut active_threads = notification_threads().lock().unwrap();
-        active_threads.remove(&peripheral_id);
     });
 }
 
@@ -423,8 +458,8 @@ async fn descriptor_from_command_string(
     Ok(descriptor)
 }
 
-async fn notification_thread(peripheral: btleplug::platform::Peripheral) {
-    let mut notifications = peripheral.notifications().await.unwrap();
+async fn notification_thread(peripheral: btleplug::platform::Peripheral) -> Result<()> {
+    let mut notifications = peripheral.notifications().await?;
 
     while let Some(event) = notifications.next().await {
         let res = json!({
@@ -439,6 +474,7 @@ async fn notification_thread(peripheral: btleplug::platform::Peripheral) {
 
         let _ = write_message(&res);
     }
+    Ok(())
 }
 
 async fn event_thread(
@@ -459,18 +495,15 @@ async fn event_thread(
                 };
                 let _ = write_peripheral_info(&peripheral).await;
             }
-            // TODO do we need to register/track this at other locations, such as for devices connected before startup?
-            CentralEvent::DeviceConnected(id) => {
-                for p in central.peripherals().await.unwrap() {
-                    if p.id() == id {
-                        start_notification_thread(p);
-                    }
-                }
-            }
-            // no need to drop the device notification stream, it is supported across connections
+            CentralEvent::DeviceConnected(_id) => {}
             CentralEvent::DeviceDisconnected(id) => {
                 let _ =
                     write_message(&json!({"_type": "disconnectEvent", "device": id.to_string()}));
+                // Allow a fresh notification thread to be started on reconnect
+                notification_threads()
+                    .lock()
+                    .unwrap()
+                    .remove(&id.to_string());
             }
             // nothing to do here really
             CentralEvent::StateUpdate(_state) => {}
