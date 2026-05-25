@@ -41,7 +41,7 @@ async fn write_peripheral_info(peripheral: &btleplug::platform::Peripheral) -> a
         "bluetoothAddress": peripheral.id().to_string(),
         "rssi": properties.rssi.map(|r| json!(r)).unwrap_or(Value::Null),
         "localName": properties.local_name.unwrap_or_else(|| peripheral.id().to_string()),
-        // no appearance
+        // "appearance": properties.appearance.unwrap_or_else(|| 0),
         "txPower": properties.tx_power_level.map(|p| json!(p)).unwrap_or(Value::Null),
         "serviceUuids": properties.services,
         "manufacturerData": properties.manufacturer_data
@@ -201,8 +201,8 @@ async fn execute_command(
                                 "notify": v.properties.contains(CharPropFlags::NOTIFY),
                                 "indicate": v.properties.contains(CharPropFlags::INDICATE),
                                 "authenticatedSignedWrites": v.properties.contains(CharPropFlags::AUTHENTICATED_SIGNED_WRITES),
-                                "reliableWrite": false, // TODO requires EXTENDED
-                                "writableAuxiliaries": false, // TODO requires EXTENDED
+                                "reliableWrite": v.properties.contains(CharPropFlags::RELIABLE_WRITE), // TODO requires EXTENDED
+                                "writableAuxiliaries": v.properties.contains(CharPropFlags::WRITABLE_AUXILIARIES), // TODO requires EXTENDED
                             }
                         }
                     ))
