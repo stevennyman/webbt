@@ -154,6 +154,12 @@ function nativePortOnMessage(msg) {
             delete characteristicCache[gattId];
             delete devices[gattId];
         }
+        // Purge stale subscriptions so re-subscribe sends fresh CCCD writes
+        for (const key of Object.keys(subscriptions)) {
+            if (key.startsWith('subscription_' + gattId + '_')) {
+                delete subscriptions[key];
+            }
+        }
     }
 }
 
