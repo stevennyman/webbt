@@ -21,6 +21,12 @@ body {
     font: caption;
     font-size: medium;
 }
+#cross-platform-update {
+    margin: 5px;
+    padding: 10px 20px 19px 20px;
+    color: black;
+    background-color: rgb(133, 250, 133);
+}
 @media (prefers-color-scheme: dark) {
     body {
         background: #23222b;

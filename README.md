@@ -4,13 +4,23 @@
 
 # WebBT for Firefox
 
-This extension enables Web Bluetooth in Firefox on Windows 10 and Windows 11. See [Credits](#credits) for details about the history of this repository including the origin of this fork.
+This extension enables Web Bluetooth in Firefox on Windows, macOS, and Linux. See [Credits](#credits) for details about the history of this repository including the origin of this fork.
+
+## System Requirements
+
+* Firefox 128 or newer
+* One of the following operating systems:
+    * Windows 10 Creators Update (version 1703 / build 15063) or newer
+        * All features generally supported. Reading `txPower` on Windows requires Windows 10 version 2004 (build 19041) or newer.
+    * macOS 10.15+
+        * Most features generally supported, though the macOS system has some limitations including reduced support for reading descriptors, no access to extended characteristic properties, no `appearance` property on advertisements, cannot subscribe to ANCS/AMS, etc.
+    * Linux
+        * All features generally supported, a few stability issues relating to reconnecting devices.
 
 ## Installation
 
-1. You need to have Windows 10 Creators Update (version 1703 / build 15063) or newer, and Firefox 128 or newer.
-    * Note: reading `txPower` requires Windows 10 version 2004 (build 19041) or newer.
-2. Install [the WebBT Firefox extension](https://addons.mozilla.org/firefox/addon/webbt/) and run the provided [WebBT server installer](https://github.com/stevennyman/webbt/releases/latest).
+1. Install [the WebBT Firefox extension](https://addons.mozilla.org/firefox/addon/webbt/)
+2. Run the provided [WebBT server installer](https://github.com/stevennyman/webbt/releases/latest).
 
 That's it! Enjoy Web Bluetooth in Firefox :-)
 
@@ -25,8 +35,8 @@ That's it! Enjoy Web Bluetooth in Firefox :-)
 <details>
 <summary>Less Common Installation Issues</summary>
     
-1. Run the `winver` program to verify that you have Windows 10 Creators Update or later. It should display: "Version 1703 (OS Build 15063.413)" or higher.
-2. Try to running `C:\Program Files (x86)\WebBT Server for Firefox\BLEServer.exe` manually. If an error message containing something like `"VCRUNTIME140.dll is missing"` appears, try manually installing [Visual C++ Redistributable for Visual Studio 2015-2022 (x86)](https://aka.ms/vs/17/release/vc_redist.x86.exe). Then launch `C:\Program Files (x86)\WebBT Server for Firefox\BLEServer.exe` one more time. If a black window containing `[{"_type":"Start","apiVersion":1,"serverName":"bleserver-win-cppcx","serverVersion":"0.5.3"}` appears, then the BLEServer is working correctly. Although since Windows 10 build 1709 it can still be blocked from running by Windows Defender SmartScreen so Firefox won't be able to start it by itself. You may disable SmartScreen for applications and programs in Windows Defender settings. It's also worth making sure that `WebBT Server for Firefox` folder and files inside have Windows' users permissions for read, write and execute ( Right Click -> Properties -> Security ).
+1. Run the `winver` program to verify that you have Windows 10 Creators Update or later. It should display: "Version 1703 (OS Build 15063.413)" or higher. Or use macOS 10.15+ or Linux.
+2. Try to running `C:\Program Files (x86)\WebBT Server for Firefox\BLEServer.exe` manually. If an error message containing something like `"VCRUNTIME140.dll is missing"` appears, try manually installing [Visual C++ Redistributable for Visual Studio 2015-2022 (x86)](https://aka.ms/vs/17/release/vc_redist.x86.exe). Then launch `C:\Program Files (x86)\WebBT Server for Firefox\BLEServer.exe` one more time. If a black window containing `[{"_type":"Start","apiVersion":2,"serverName":"rust-server","serverVersion":"0.6.0"}` appears, then the BLEServer is working correctly. Although since Windows 10 build 1709 it can still be blocked from running by Windows Defender SmartScreen so Firefox won't be able to start it by itself. You may disable SmartScreen for applications and programs in Windows Defender settings. It's also worth making sure that `WebBT Server for Firefox` folder and files inside have Windows' users permissions for read, write and execute ( Right Click -> Properties -> Security ).
    
 </details>
 
@@ -68,14 +78,13 @@ List of API methods / events and their implementation status:
 - [ ] TODO add additional entries for this list
 
 ## Future Work
-- Rewrite BLEServer to enable cross-platform usage, possibly using Rust and the Bluest library
 - Implement all remaining APIs
 - Add timeout/page hide event to scanning and other operations as needed
 
 ## Developing
 
-1. Open the Visual Studio solution and compile the project.
-2. Open the Inno Setup (`.iss`) file and compile and run the installer.
+1. In the `rust_server` directory, run `cargo build`. (For the legacy Windows C++ BLEServer: Open the Visual Studio solution and compile the project.)
+2. Open the Inno Setup (`.iss`) file and compile and run the installer. (For the legacy Windows C++ BLEServer: Remove `#define USE_RUST`.)
 3. Install the extension into Firefox using `about:debugging`.
 4. (Optional) Names for GATT characteristics, descriptors, and services can be updated/synchronized with the Bluetooth SIG assigned numbers by updating the `Bluetooth_SIG_UUIDs` submodule then running `update_uuids.py`.
 
