@@ -23,9 +23,7 @@ let currentRecommendedUpdateContents = null;
 
 // this is a flag that can be set by the server at startup as this differs by implementation
 // C++/CX uses one global scanning instance where the extension keeps count of how many instances are required
-// Rust uses a separate scanner for each request and thus must be shut down individually by id
 // Note: to prevent race conditions, any logic that evaluates this variable should await nativeReady
-// TODO: this needs to adapt correct to ensure support for both versions
 let serverApiVersion = 1;
 
 function removeFirst(arr, value) {
@@ -33,9 +31,9 @@ function removeFirst(arr, value) {
     if (i !== -1) arr.splice(i, 1);
 }
 
-async function openOrFocusInfoTab() {
+async function openOrFocusInfoTab(alwaysShow) {
     if (Date.now() - lastInfoTab < COOLDOWN_MS) return;
-    if ((await browser.storage.local.get('hideInstallation')).hideInstallation) return;
+    if (!alwaysShow && (await browser.storage.local.get('hideInstallation')).hideInstallation) return;
     lastInfoTab = Date.now();
     if (infoTabId != null) {
         try {
@@ -47,6 +45,12 @@ async function openOrFocusInfoTab() {
         infoTabId = (await browser.tabs.create({ url: '/installation.html' })).id;
     }
 }
+
+browser.runtime.onInstalled.addListener((details) => {
+    if (details.reason == 'update' && (details.previousVersion == '0.5.2' || details.previousVersion == '0.5.3')) {
+        openOrFocusInfoTab(true);
+    }
+});
 
 
 async function nativeRequest(cmd, params, port) {
