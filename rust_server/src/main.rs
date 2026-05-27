@@ -3,7 +3,7 @@
 
 use anyhow::{Context, Result};
 use btleplug::api::{
-    Central, CentralEvent, CharPropFlags, Manager, Peripheral, ScanFilter, WriteType,
+    Central, CentralEvent, CentralState, CharPropFlags, Manager, Peripheral, ScanFilter, WriteType,
 };
 use btleplug::platform::Adapter;
 use futures_lite::Stream;
@@ -41,7 +41,7 @@ async fn write_peripheral_info(peripheral: &btleplug::platform::Peripheral) -> a
         "bluetoothAddress": peripheral.id().to_string(),
         "rssi": properties.rssi.map(|r| json!(r)).unwrap_or(Value::Null),
         "localName": properties.local_name.unwrap_or_else(|| peripheral.id().to_string()),
-        // "appearance": properties.appearance.unwrap_or_else(|| 0),
+        "appearance": properties.appearance.unwrap_or_else(|| 0),
         "txPower": properties.tx_power_level.map(|p| json!(p)).unwrap_or(Value::Null),
         "serviceUuids": properties.services,
         "manufacturerData": properties.manufacturer_data
@@ -201,8 +201,8 @@ async fn execute_command(
                                 "notify": v.properties.contains(CharPropFlags::NOTIFY),
                                 "indicate": v.properties.contains(CharPropFlags::INDICATE),
                                 "authenticatedSignedWrites": v.properties.contains(CharPropFlags::AUTHENTICATED_SIGNED_WRITES),
-                                "reliableWrite": v.properties.contains(CharPropFlags::RELIABLE_WRITE), // TODO requires EXTENDED
-                                "writableAuxiliaries": v.properties.contains(CharPropFlags::WRITABLE_AUXILIARIES), // TODO requires EXTENDED
+                                // "reliableWrite": v.properties.contains(CharPropFlags::RELIABLE_WRITE), // TODO requires EXTENDED
+                                // "writableAuxiliaries": v.properties.contains(CharPropFlags::WRITABLE_AUXILIARIES), // TODO requires EXTENDED
                             }
                         }
                     ))
@@ -564,10 +564,24 @@ async fn main() -> anyhow::Result<()> {
 
                 // for other commands, require an adapter
                 if let Some(ref c) = central {
-                    let central_for_task = c.clone();
-                    tokio::spawn(async move {
-                        process_command(message, &central_for_task).await;
-                    });
+                    if matches!(c.adapter_state().await, Ok(state) if state != CentralState::PoweredOff)
+                    {
+                        let central_for_task = c.clone();
+                        tokio::spawn(async move {
+                            process_command(message, &central_for_task).await;
+                        });
+                    } else {
+                        let mut response = Map::new();
+                        response.insert("_type".into(), "response".into());
+                        let cmd_id = message.get("_id").and_then(|v| v.as_i64()).unwrap_or(-1);
+                        response.insert("_id".into(), cmd_id.into());
+                        response.insert("result".into(), Value::Null);
+                        response.insert(
+                            "error".into(),
+                            Value::String("No Bluetooth adapter available or Bluetooth is turned off in your system settings.".into()),
+                        );
+                        let _ = write_message(&response);
+                    }
                 } else {
                     let mut response = Map::new();
                     response.insert("_type".into(), "response".into());
@@ -576,7 +590,7 @@ async fn main() -> anyhow::Result<()> {
                     response.insert("result".into(), Value::Null);
                     response.insert(
                         "error".into(),
-                        Value::String("No Bluetooth adapter available".into()),
+                        Value::String("No Bluetooth adapter available or Bluetooth is turned off in your system settings.".into()),
                     );
                     let _ = write_message(&response);
                 }

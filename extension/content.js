@@ -56,7 +56,7 @@ function portMsg(message) {
         return;
     }
 
-    if (message._type === 'deviceChooserWinError') {
+    if (message._type === 'deviceChooserBluetoothError') {
         if (chooserUI) {
             chooserUI.winError();
         }
@@ -163,7 +163,7 @@ class DeviceChooserUI {
         this.shadowRoot = shadowRoot;
         shadowRoot.innerHTML = `
             <style>
-                #chooser-dialog, #windows_nobluetooth {
+                #chooser-dialog, #nobluetooth {
                     width: 380px;
                     background: white;
                     margin: 0 auto;
@@ -202,12 +202,12 @@ class DeviceChooserUI {
                     color: white;
                 }
 
-                #buttons, #buttons_windows_nobluetooth {
+                #buttons, #buttons_nobluetooth {
                     display: flex;
                     justify-content: flex-end;
                 }
 
-                #buttons button, #buttons_windows_nobluetooth button {
+                #buttons button, #buttons_nobluetooth button {
                     cursor: pointer;
                     border: solid #c0c0c0 1px;
                     border-radius: 3px;
@@ -240,14 +240,17 @@ class DeviceChooserUI {
                 </div>
             </dialog>
 
-            <dialog id="windows_nobluetooth">
+            <dialog id="nobluetooth">
                 <div><span><b>Unable to start scanning for Bluetooth devices.</b></span></div>
                 <div><span>Ensure that your device is Bluetooth-capable and that Bluetooth is turned on.</span></div>
                 <br>
-                <div><span><a href="ms-settings:bluetooth" target="_blank">Go to Windows Bluetooth Settings</a></span></div>
+                <div><span>
+                    <a id="windows_bluetoothlink" href="ms-settings:bluetooth" target="_blank" hidden>Go to Windows Bluetooth Settings</a>
+                    <a href="x-apple.systempreferences:com.apple.BluetoothSettings" id="macos_bluetoothlink" target="_blank" hidden>Go to macOS Bluetooth Settings</a>
+                </span></div>
                 <br>
-                <div id="buttons_windows_nobluetooth">
-                    <button id="windows_nobluetooth_ok">OK</button>
+                <div id="buttons_nobluetooth">
+                    <button id="nobluetooth_ok">OK</button>
                 </div>
             </dialog>
         `;
@@ -255,9 +258,16 @@ class DeviceChooserUI {
         this.btnPair = shadowRoot.getElementById('btn-pair');
         this.deviceListElement = shadowRoot.getElementById('device-list');
         this.chooserDialog = shadowRoot.getElementById('chooser-dialog');
-        this.windows_nobluetooth = shadowRoot.getElementById('windows_nobluetooth');
-        this.windows_nobluetooth_ok = shadowRoot.getElementById('windows_nobluetooth_ok');
+        this.nobluetooth = shadowRoot.getElementById('nobluetooth');
+        this.nobluetooth_ok = shadowRoot.getElementById('nobluetooth_ok');
 
+        if (navigator.platform.includes("Win")) {
+            shadowRoot.getElementById('windows_bluetoothlink')?.removeAttribute('hidden');
+        }
+
+        if (navigator.platform.includes("Mac")) {
+            shadowRoot.getElementById('macos_bluetoothlink')?.removeAttribute('hidden');
+        }
 
         this.recommendedUpdate = shadowRoot.getElementById('recommendedUpdate');
         this.recommendedUpdateText = shadowRoot.getElementById('recommendedUpdateText');
@@ -274,8 +284,8 @@ class DeviceChooserUI {
         shadowRoot.getElementById('hostname').innerText = document.location.hostname;
         shadowRoot.getElementById('btn-cancel').addEventListener('click', () => this.cancel());
         this.btnPair.addEventListener('click', () => this.pair());
-        this.windows_nobluetooth.addEventListener('click', e => e.stopPropagation());
-        this.windows_nobluetooth_ok.addEventListener('click', () => this.cancel());
+        this.nobluetooth.addEventListener('click', e => e.stopPropagation());
+        this.nobluetooth_ok.addEventListener('click', () => this.cancel());
     }
 
     show() {
@@ -304,7 +314,7 @@ class DeviceChooserUI {
     winError() {
         this.chooserDialog.close();
         this.onCancel();
-        this.windows_nobluetooth.showModal();
+        this.nobluetooth.showModal();
     }
 
     cancel() {

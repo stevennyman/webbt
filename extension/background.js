@@ -540,8 +540,9 @@ async function requestDevice(port, options) {
     try {
         await startScanning(port, SCAN_NAME, serviceList);
     } catch (error) {
-        if (error == 'The device is not ready for use.\r\n\r\nThe device is not ready for use.\r\n') {
-            port.postMessage({ _type: 'deviceChooserWinError' });
+        if (error == 'The device is not ready for use.\r\n\r\nThe device is not ready for use.\r\n'
+            || error == 'No Bluetooth adapter available or Bluetooth is turned off in your system settings.') {
+            port.postMessage({ _type: 'deviceChooserBluetoothError' });
         }
         throw error;
     }
