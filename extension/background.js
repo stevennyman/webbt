@@ -20,6 +20,30 @@ let nativeResolve = null;
 let nativeReady = null;
 
 let currentRecommendedUpdateContents = null;
+let currentOptionalUpdateContents = null;
+
+// upgrades will only be offered against these servers
+// a community server should provide a different serverName in its Start message)
+const WEBBT_FIRSTPARTY_SERVERS = ['bleserver-win-cppcx', 'rust-server'];
+
+const WEBBT_SERVER_UPDATES = {
+    // we're not requiring 0.5.2 server users to update to 0.5.3 but we are recommending it
+    // server API remains compatible, some users may have restrictions preventing them from installing software
+    'recommended': {
+        'version': '0.5.3',
+        'upgrade_versions': ['0.5.2'],
+        'upgrade_message': 'A recommended update for WebBT Server, version 0.5.3, is now available ' +
+            'for your system. This update improves performance and pairing reliability.',
+    },
+    // we're not requiring 0.5.2 or 0.5.3 server users to update to the rewrite but we are offering it
+    'optional': {
+        'version': '0.6.0',
+        'upgrade_versions': ['0.5.2', '0.5.3'],
+        'upgrade_message': 'An optional update for WebBT Server, version 0.6.0, is now available ' +
+            'for your system. This update is a cross-platform rewrite of WebBT Server that is compatible ' +
+            'with Windows, macOS, and Linux.',
+    },
+};
 
 // this is a flag that can be set by the server at startup as this differs by implementation
 // C++/CX uses one global scanning instance where the extension keeps count of how many instances are required
@@ -112,17 +136,35 @@ function nativePortOnMessage(msg) {
             commandPorts = {};
             console.log('Unsupported WebBT server version. Extension or server update required. https://github.com/stevennyman/webbt/releases/latest');
             openOrFocusInfoTab();
-        } else if (msg.serverName == 'bleserver-win-cppcx' && msg.serverVersion == '0.5.2') {
-            // we're not requiring 0.5.2 server users to update but we are recommending it
-            // server API remains compatible, some users may have restrictions preventing them from installing software
-            currentRecommendedUpdateContents = { _type: 'recommendedUpdate', message: 'A recommended update for WebBT Server, version 0.5.3, is now available for your system. This update improves performance and pairing reliability.', consoleMessage: 'A recommended update for WebBT Server, version 0.5.3, is now available for your system. This update improves performance and pairing reliability. https://github.com/stevennyman/webbt/releases/latest' };
-            for (const reqId in requests) {
-                commandPorts[reqId].postMessage({ currentRecommendedUpdateContents: currentRecommendedUpdateContents });
-            }
         } else {
-            currentRecommendedUpdateContents = null;
-            for (const reqId in requests) {
-                commandPorts[reqId].postMessage({ currentRecommendedUpdateContents: null });
+            if (WEBBT_FIRSTPARTY_SERVERS.includes(msg.serverName) &&
+            WEBBT_SERVER_UPDATES.recommended.upgrade_versions.includes(msg.serverVersion)) {
+                currentRecommendedUpdateContents = { _type: 'recommendedUpdate', message: WEBBT_SERVER_UPDATES.recommended.upgrade_message, consoleMessage: WEBBT_SERVER_UPDATES.recommended.upgrade_message + ' https://github.com/stevennyman/webbt/releases/latest' };
+                for (const reqId in requests) {
+                    commandPorts[reqId].postMessage({
+                        currentRecommendedUpdateContents: currentRecommendedUpdateContents,
+                    });
+                }
+            } else {
+                currentRecommendedUpdateContents = null;
+                for (const reqId in requests) {
+                    commandPorts[reqId].postMessage({ currentRecommendedUpdateContents: null });
+                }
+            }
+
+            if (WEBBT_FIRSTPARTY_SERVERS.includes(msg.serverName) &&
+            WEBBT_SERVER_UPDATES.optional.upgrade_versions.includes(msg.serverVersion)) {
+                currentOptionalUpdateContents = { _type: 'optionalUpdate', message: WEBBT_SERVER_UPDATES.optional.upgrade_message, consoleMessage: WEBBT_SERVER_UPDATES.optional.upgrade_message + ' https://github.com/stevennyman/webbt/releases/latest' };
+                for (const reqId in requests) {
+                    commandPorts[reqId].postMessage({
+                        currentOptionalUpdateContents: currentOptionalUpdateContents,
+                    });
+                }
+            } else {
+                currentOptionalUpdateContents = null;
+                for (const reqId in requests) {
+                    commandPorts[reqId].postMessage({ currentOptionalUpdateContents: null });
+                }
             }
         }
     }
@@ -536,6 +578,7 @@ async function requestDevice(port, options) {
     nativePort.onMessage.addListener(scanResultListener);
     port.postMessage({
         _type: 'showDeviceChooser', currentRecommendedUpdateContents: currentRecommendedUpdateContents,
+        currentOptionalUpdateContents: currentOptionalUpdateContents,
     });
     try {
         await startScanning(port, SCAN_NAME, serviceList);
@@ -675,7 +718,8 @@ async function watchAdvertisements(port, webId) {
 
     await startScanning(port, 'dev_'+port.sender.contextId+gattId);
 
-    return { currentRecommendedUpdateContents: currentRecommendedUpdateContents };
+    return { currentRecommendedUpdateContents: currentRecommendedUpdateContents,
+        currentOptionalUpdateContents: currentOptionalUpdateContents };
 }
 
 async function stopAdvertisements(port, webId, stopAll = false) {

@@ -3,6 +3,7 @@ var port = null;
 let chooserUI = null;
 
 let recommendedUpdateShown = false;
+let optionalUpdateShown = false;
 
 function disconnectport() {
     if (port) {
@@ -36,6 +37,21 @@ function portMsg(message) {
         recommendedUpdateShown = false;
     }
 
+    if ('currentOptionalUpdateContents' in message && message.currentOptionalUpdateContents) {
+        if (chooserUI) {
+            chooserUI.showOptionalUpdate(message.currentOptionalUpdateContents.message);
+        }
+        if (!optionalUpdateShown) {
+            console.log(message.currentOptionalUpdateContents.consoleMessage);
+            optionalUpdateShown = true;
+        }
+    } else if ('currentOptionalUpdateContents' in message && message.currentOptionalUpdateContents === null) {
+        if (chooserUI) {
+            chooserUI.hideOptionalUpdate();
+        }
+        optionalUpdateShown = false;
+    }
+
     if (message._type === 'showDeviceChooser') {
         if (!chooserUI) {
             chooserUI = new DeviceChooserUI();
@@ -43,6 +59,9 @@ function portMsg(message) {
             chooserUI.onCancel = () => port.postMessage({ cmd: 'chooserCancel' });
             if (message.currentRecommendedUpdateContents) {
                 chooserUI.showRecommendedUpdate(message.currentRecommendedUpdateContents.message);
+            }
+            if (message.currentOptionalUpdateContents) {
+                chooserUI.showOptionalUpdate(message.currentOptionalUpdateContents.message);
             }
         }
         chooserUI.show();
@@ -220,6 +239,12 @@ class DeviceChooserUI {
                     background: #f0d759;
                     margin-bottom: 6px;
                 }
+                
+                #optionalUpdate {
+                    color: #23222b;
+                    background-color: rgb(133, 250, 133);
+                    margin-bottom: 6px;
+                }
 
             </style>
 
@@ -229,6 +254,9 @@ class DeviceChooserUI {
                 </div>
                 <div id="recommendedUpdate" hidden>
                     <span id="recommendedUpdateText"></span><br /><a href="https://github.com/stevennyman/webbt/releases" target="_blank">Download Now</a>
+                </div>
+                <div id="optionalUpdate" hidden>
+                    <span id="optionalUpdateText"></span><br /><a href="https://github.com/stevennyman/webbt/releases" target="_blank">Download Now</a>
                 </div>
                 <div id="buttons">
                     <button id="btn-cancel">Cancel</button>
@@ -272,6 +300,9 @@ class DeviceChooserUI {
         this.recommendedUpdate = shadowRoot.getElementById('recommendedUpdate');
         this.recommendedUpdateText = shadowRoot.getElementById('recommendedUpdateText');
 
+        this.optionalUpdate = shadowRoot.getElementById('optionalUpdate');
+        this.optionalUpdateText = shadowRoot.getElementById('optionalUpdateText');
+
         this.openOptions = shadowRoot.getElementById('openOptions');
         this.openOptions.href = chrome.runtime.getURL('options.html');
         this.openOptions.addEventListener('click', e => {
@@ -305,6 +336,11 @@ class DeviceChooserUI {
     showRecommendedUpdate(updateText) {
         this.recommendedUpdateText.innerText = updateText;
         this.recommendedUpdate.removeAttribute('hidden');
+    }
+
+    showOptionalUpdate(updateText) {
+        this.optionalUpdateText.innerText = updateText;
+        this.optionalUpdate.removeAttribute('hidden');
     }
 
     hideRecommendedUpdate() {
