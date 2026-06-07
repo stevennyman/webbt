@@ -1,0 +1,64 @@
+#!/bin/bash
+
+set -euo pipefail
+
+SYSTEM_INSTALL_ROOT="/Library/Application Support/WebBT Server for Firefox"
+USER_INSTALL_ROOT="$HOME/Library/Application Support/WebBT Server for Firefox"
+SYSTEM_MANIFEST="/Library/Application Support/Mozilla/NativeMessagingHosts/webbt.server.json"
+USER_MANIFEST="$HOME/Library/Application Support/Mozilla/NativeMessagingHosts/webbt.server.json"
+
+# $USER and $HOME are set correctly by the macOS installer sandbox even when running as root
+USER_UID=$(id -u "$USER")
+
+has_gui() {
+  [[ -n "$(pgrep -x WindowServer 2>/dev/null)" ]]
+}
+
+run_user_osascript() {
+  if [[ "$(id -u)" -eq "$USER_UID" ]]; then
+    osascript <<< "$1"
+  else
+    launchctl asuser "$USER_UID" sudo -u "$USER" osascript <<< "$1"
+  fi
+}
+
+alert() {
+  local title="$1" msg="$2" kind="${3:-}"
+  echo "WebBT installer: $msg"
+  run_user_osascript "display alert \"$title\" message \"${msg//\"/\\\"}\"${kind:+ $kind} buttons {\"OK\"} default button \"OK\"" >/dev/null 2>&1 || true
+}
+
+confirm() {
+  local title="$1" msg="$2"
+  run_user_osascript "display alert \"$title\" message \"${msg//\"/\\\"}\" buttons {\"Cancel\", \"Continue\"} default button \"Continue\" cancel button \"Cancel\"" 2>&1 || true
+}
+
+if pgrep -x BLEServer >/dev/null 2>&1; then
+  alert "Installation blocked" "WebBT Server is currently running in Firefox. Close any pages that use Web Bluetooth, then run this installer again." "as critical"
+  exit 1
+fi
+
+if [[ "$DSTROOT" == "$SYSTEM_INSTALL_ROOT" ]]; then
+  if [[ -d "$USER_INSTALL_ROOT" || -f "$USER_MANIFEST" ]]; then
+    echo "WebBT installer: A current-user installation already exists. It will be removed so this all-users installation can be used."
+    if has_gui; then
+      output=$(confirm "Confirm removal" "A current-user WebBT Server installation already exists and will be removed before continuing with an all-users installation.")
+      if [[ "$output" != *"button returned:Continue"* ]]; then
+        echo "WebBT installer: Installation cancelled by user before removing existing current-user installation."
+        exit 1
+      fi
+    else
+      echo "WebBT installer: No GUI available. Removing existing current-user installation automatically."
+    fi
+    if rm -rf "$USER_INSTALL_ROOT" "$USER_MANIFEST"; then
+      echo "WebBT installer: Removed existing user installation at: $USER_INSTALL_ROOT"
+    else
+      alert "Installation failed" "Failed to remove existing user installation at: $USER_INSTALL_ROOT. Please uninstall the per-user installation or run this installer as the user who installed it, then try again." "as critical"
+      exit 1
+    fi
+  fi
+else
+  if [[ -d "$SYSTEM_INSTALL_ROOT" || -f "$SYSTEM_MANIFEST" ]]; then
+    alert "Installation warning" "A systemwide WebBT Server installation already exists. Firefox will use this current-user installation for this account.\n\nTo remove the all-users installation, run:\nsudo \"$SYSTEM_INSTALL_ROOT/uninstall.sh\""
+  fi
+fi

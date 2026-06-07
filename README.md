@@ -20,7 +20,7 @@ This extension enables Web Bluetooth in Firefox on Windows, macOS, and Linux. Se
 ## Installation
 
 1. Install [the WebBT Firefox extension](https://addons.mozilla.org/firefox/addon/webbt/)
-2. Run the provided [WebBT server installer](https://github.com/stevennyman/webbt/releases/latest).
+2. Run the provided [WebBT server installer](https://github.com/stevennyman/webbt/releases/latest) for your platform.
 
 That's it! Enjoy Web Bluetooth in Firefox :-)
 
@@ -29,20 +29,35 @@ That's it! Enjoy Web Bluetooth in Firefox :-)
 1. If the application is unable to pair your devices (for example throwing an `Unreachable` exception during pairing), rebooting both your computer and your Bluetooth device may solve the problem. You can also try unpairing the devices from each other from the settings on both devices and/or turning Bluetooth off then back on again. On Windows, this can be done from the [Settings app](ms-settings:bluetooth).
 
 ### Installation issues
+
 1. Open the Devtools console of any web page, and look for the message: "WebBT loaded". If you don't see this message, it means that either the extension was not installed correctly, or you already have something setting the `navigator.bluetooth` object to some value.
 2. Follow these [instructions on the original repo](https://github.com/urish/web-bluetooth-polyfill/issues/21#issuecomment-308990559) to debug the background page of the extension.
 
 <details>
-<summary>Less Common Installation Issues</summary>
+<summary>Less Common Installation Issues (Windows)</summary>
     
 1. Run the `winver` program to verify that you have Windows 10 Creators Update or later. It should display: "Version 1703 (OS Build 15063.413)" or higher. Or use macOS 10.15+ or Linux.
 2. Try to running `C:\Program Files (x86)\WebBT Server for Firefox\BLEServer.exe` manually. If an error message containing something like `"VCRUNTIME140.dll is missing"` appears, try manually installing [Visual C++ Redistributable for Visual Studio 2015-2022 (x86)](https://aka.ms/vs/17/release/vc_redist.x86.exe). Then launch `C:\Program Files (x86)\WebBT Server for Firefox\BLEServer.exe` one more time. If a black window containing `[{"_type":"Start","apiVersion":2,"serverName":"rust-server","serverVersion":"0.6.0"}` appears, then the BLEServer is working correctly. Although since Windows 10 build 1709 it can still be blocked from running by Windows Defender SmartScreen so Firefox won't be able to start it by itself. You may disable SmartScreen for applications and programs in Windows Defender settings. It's also worth making sure that `WebBT Server for Firefox` folder and files inside have Windows' users permissions for read, write and execute ( Right Click -> Properties -> Security ).
    
 </details>
 
+## Uninstallation
+
+If you encountered a bug, please feel free to open an issue.
+
+First, uninstall the extension from Firefox by visiting `about:addons`. Then, follow the instructions for your platform to uninstall WebBT Server.
+
+### Windows
+
+Use the System settings app. Go to Apps > Installed apps (you can use the URL `ms-settings:appsfeatures` to go directly to this page), select the `...` next to `WebBT Server for Firefox`, select Uninstall, and follow the prompts.
+
+### macOS
+
+To uninstall on macOS, run [installer/macos/uninstall.sh](installer/macos/uninstall.sh) from a terminal. If you installed systemwide, run it with `sudo`.
+
 ## Current State
 
-TL;DR - Should work out of the box with most Web Bluetooth apps. Currently Windows-only.
+TL;DR - Should work out of the box with most Web Bluetooth apps.
 
 Most of the functionality is already there, but there might be slight differences between the current implementation and the spec.
 
@@ -83,10 +98,21 @@ List of API methods / events and their implementation status:
 
 ## Developing
 
+### Required tools
+
+* Rust toolchain for your platform and CPU architecture (we currently build for x86 (excluding macOS), x64, and ARM64)
+* Git
+* Firefox 128 or later
+* Inno Setup (for building the Windows installer)
+* Xcode Command Line Tools (for building the macOS installer)
+* Microsoft Visual C++ v14 Redistributable (required on Windows for both the Rust and legacy C++ BLEServer)
+* Visual Studio 2026 Community Edition with "Desktop development with C++" workload installed (for building the legacy Windows C++ BLEServer)
+
+### Steps
 1. In the `rust_server` directory, run `cargo build`. (For the legacy Windows C++ BLEServer: Open the Visual Studio solution and compile the project.)
-2. Open the Inno Setup (`.iss`) file and compile and run the installer. (For the legacy Windows C++ BLEServer: Remove `#define USE_RUST`.)
-3. Install the extension into Firefox using `about:debugging`.
-4. (Optional) Names for GATT characteristics, descriptors, and services can be updated/synchronized with the Bluetooth SIG assigned numbers by updating the `Bluetooth_SIG_UUIDs` submodule then running `update_uuids.py`.
+2. Tp build the Windows installer, open the Inno Setup (`.iss`) file and compile and run the installer. (For the legacy Windows C++ BLEServer: Remove `#define USE_RUST`.) To build the macOS pkg, compile `rust_server` for both macOS targets and run `installer/macos/build-pkg.sh`.
+4. Install the extension into Firefox using `about:debugging`.
+5. (Optional) Names for GATT characteristics, descriptors, and services can be updated/synchronized with the Bluetooth SIG assigned numbers by updating the `Bluetooth_SIG_UUIDs` submodule then running `update_uuids.py`.
 
 ## Credits
 
