@@ -106,7 +106,7 @@ List of API methods / events and their implementation status:
 * Inno Setup (for building the Windows installer)
 * Xcode Command Line Tools (for building the macOS installer)
 * Microsoft Visual C++ v14 Redistributable (required on Windows for both the Rust and legacy C++ BLEServer)
-* Visual Studio 2026 Community Edition with "Desktop development with C++" workload installed (for building the legacy Windows C++ BLEServer)
+* Visual Studio 2022 or 2026 Community Edition with "Desktop development with C++" workload installed (for building the legacy Windows C++ BLEServer; Rust also needs this but current only recognizes Visual Studio 2022)
 
 ### Steps
 1. In the `rust_server` directory, run `cargo build`. (For the legacy Windows C++ BLEServer: Open the Visual Studio solution and compile the project.)

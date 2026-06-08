@@ -78,6 +78,7 @@ dependencies = [
 [[package]]
 name = "btleplug"
 version = "0.12.0"
+source = "git+https://github.com/stevennyman/btleplug?branch=webbt#d74063c77e47eb83673112315f9bc5a0a007d91c"
 dependencies = [
  "async-trait",
  "bitflags 2.11.1",
