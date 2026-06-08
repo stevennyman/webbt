@@ -18,7 +18,7 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
-InfoBeforeFile=..\License.txt
+InfoBeforeFile=..\..\License.txt
 InfoAfterFile=EndNotice.rtf
 ; Remove the following line to run in administrative install mode (install for all users.)
 PrivilegesRequired=lowest
@@ -31,7 +31,8 @@ WizardStyle=modern dynamic
 AppMutex=BLEServer
 UninstallDisplayName={#MyAppName}
 MinVersion=10.0.15063
-SetupIconFile=..\BLEServer\logo.ico
+; TODO remap this to Rust server
+SetupIconFile=..\..\BLEServer\logo.ico
 ArchitecturesInstallIn64BitMode=x64compatible or arm64
 UninstallDisplayIcon={app}\BLEServer.exe
 ; The following metadata is only shown when uninstalling through Control Panel > Programs and Features, not in the Settings app
@@ -58,14 +59,14 @@ Root: HKA; Subkey: "SOFTWARE\Mozilla\NativeMessagingHosts\webbt.server"; ValueTy
 
 [Files]
 #ifdef USE_RUST
-Source: "..\rust_server\target\aarch64-pc-windows-msvc\release\BLEServer.exe"; DestDir: "{app}"; Check: PreferArm64Files; Flags: ignoreversion
-Source: "..\rust_server\target\debug\BLEServer.exe"; DestDir: "{app}"; Check: PreferX64Files; Flags: ignoreversion
-; Source: "..\rust_server\target\x86_64-pc-windows-msvc\release\BLEServer.exe"; DestDir: "{app}"; Check: PreferX64Files; Flags: ignoreversion
-Source: "..\rust_server\target\i686-pc-windows-msvc\release\BLEServer.exe"; DestDir: "{app}"; Check: PreferX86Files; Flags: ignoreversion
+Source: "..\..\rust_server\target\aarch64-pc-windows-msvc\release\BLEServer.exe"; DestDir: "{app}"; Check: PreferArm64Files; Flags: ignoreversion
+Source: "..\..\rust_server\target\debug\BLEServer.exe"; DestDir: "{app}"; Check: PreferX64Files; Flags: ignoreversion
+; Source: "..\..\rust_server\target\x86_64-pc-windows-msvc\release\BLEServer.exe"; DestDir: "{app}"; Check: PreferX64Files; Flags: ignoreversion
+Source: "..\..\rust_server\target\i686-pc-windows-msvc\release\BLEServer.exe"; DestDir: "{app}"; Check: PreferX86Files; Flags: ignoreversion
 #else
-Source: "..\BLEServer\ARM64\Release\BLEServer.exe"; DestDir: "{app}"; Check: PreferArm64Files; Flags: ignoreversion
-Source: "..\BLEServer\x64\Release\BLEServer.exe"; DestDir: "{app}"; Check: PreferX64Files; Flags: ignoreversion
-Source: "..\BLEServer\Release\BLEServer.exe"; DestDir: "{app}"; Check: PreferX86Files; Flags: ignoreversion
+Source: "..\..\BLEServer\ARM64\Release\BLEServer.exe"; DestDir: "{app}"; Check: PreferArm64Files; Flags: ignoreversion
+Source: "..\..\BLEServer\x64\Release\BLEServer.exe"; DestDir: "{app}"; Check: PreferX64Files; Flags: ignoreversion
+Source: "..\..\BLEServer\Release\BLEServer.exe"; DestDir: "{app}"; Check: PreferX86Files; Flags: ignoreversion
 #endif
 Source: "manifest.json"; DestDir: "{app}"; Flags: ignoreversion
 
