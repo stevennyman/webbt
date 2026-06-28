@@ -18,7 +18,7 @@ cat > "$manifest_dir/webbt.server.json" <<EOF
 {
   "name": "webbt.server",
   "description": "Web Bluetooth Extension Server",
-  "path": "$DSTROOT/BLEServer",
+  "path": "$DSTROOT/WebBT Server.app/Contents/MacOS/BLEServer",
   "type": "stdio",
   "allowed_extensions": [
     "webbt@ff"

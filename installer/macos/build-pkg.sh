@@ -19,17 +19,34 @@ for binary in "$ARM64_BINARY" "$X64_BINARY"; do
   fi
 done
 
-rm -rf "$BUILD_DIR"
-mkdir -p "$BUILD_DIR/staging-arm64" "$BUILD_DIR/staging-x86_64" "$BUILD_DIR/scripts" "$RESOURCES_DIR"
-trap 'rm -f "$BUILD_DIR/webbt-arm64.pkg" "$BUILD_DIR/webbt-x86_64.pkg"' EXIT
+STAGING_DIR=$(mktemp -d)
+trap 'rm -rf "$STAGING_DIR"' EXIT
+mkdir -p \
+  "$STAGING_DIR/staging-arm64/WebBT Server.app/Contents/MacOS" \
+  "$STAGING_DIR/staging-arm64/WebBT Server.app/Contents/Resources" \
+  "$STAGING_DIR/staging-x86_64/WebBT Server.app/Contents/MacOS" \
+  "$STAGING_DIR/staging-x86_64/WebBT Server.app/Contents/Resources" \
+  "$STAGING_DIR/scripts" \
+  "$BUILD_DIR" \
+  "$RESOURCES_DIR"
 
-install -m 755 "$ARM64_BINARY" "$BUILD_DIR/staging-arm64/BLEServer"
-install -m 755 "$X64_BINARY" "$BUILD_DIR/staging-x86_64/BLEServer"
-install -m 755 "$SCRIPT_DIR/uninstall.sh" "$BUILD_DIR/staging-arm64/uninstall.sh"
-install -m 755 "$SCRIPT_DIR/uninstall.sh" "$BUILD_DIR/staging-x86_64/uninstall.sh"
+install -m 755 "$ARM64_BINARY" "$STAGING_DIR/staging-arm64/WebBT Server.app/Contents/MacOS/BLEServer"
+install -m 755 "$X64_BINARY"   "$STAGING_DIR/staging-x86_64/WebBT Server.app/Contents/MacOS/BLEServer"
+install -m 755 "$SCRIPT_DIR/uninstall.sh" "$STAGING_DIR/staging-arm64/uninstall.sh"
+install -m 755 "$SCRIPT_DIR/uninstall.sh" "$STAGING_DIR/staging-x86_64/uninstall.sh"
 
-install -m 755 "$SCRIPT_DIR/scripts/preinstall" "$BUILD_DIR/scripts/preinstall"
-install -m 755 "$SCRIPT_DIR/scripts/postinstall" "$BUILD_DIR/scripts/postinstall"
+sed "s/{{PRODUCT_VERSION}}/$PRODUCT_VERSION/g" \
+  "$SCRIPT_DIR/Info.plist.template" \
+  > "$STAGING_DIR/staging-arm64/WebBT Server.app/Contents/Info.plist"
+cp "$STAGING_DIR/staging-arm64/WebBT Server.app/Contents/Info.plist" \
+   "$STAGING_DIR/staging-x86_64/WebBT Server.app/Contents/Info.plist"
+install -m 644 "$SCRIPT_DIR/AppIcon.icns" \
+  "$STAGING_DIR/staging-arm64/WebBT Server.app/Contents/Resources/AppIcon.icns"
+cp "$STAGING_DIR/staging-arm64/WebBT Server.app/Contents/Resources/AppIcon.icns" \
+   "$STAGING_DIR/staging-x86_64/WebBT Server.app/Contents/Resources/AppIcon.icns"
+
+install -m 755 "$SCRIPT_DIR/scripts/preinstall" "$STAGING_DIR/scripts/preinstall"
+install -m 755 "$SCRIPT_DIR/scripts/postinstall" "$STAGING_DIR/scripts/postinstall"
 
 license_title=$(awk 'NF { print; exit }' "$REPO_ROOT/License.txt")
 license_title_escaped=$(printf '%s' "$license_title" | sed -e 's/&/&amp;/g' -e 's/</&lt;/g' -e 's/>/&gt;/g')
@@ -130,28 +147,28 @@ cat > "$RESOURCES_DIR/conclusion.html" <<EOF
 EOF
 
 sed "s/{{PRODUCT_VERSION}}/$PRODUCT_VERSION/" \
-  "$SCRIPT_DIR/distribution.xml.template" > "$BUILD_DIR/distribution.xml"
+  "$SCRIPT_DIR/distribution.xml.template" > "$STAGING_DIR/distribution.xml"
 
 pkgbuild \
   --identifier webbt.server.macos.arm64 \
   --version "$PRODUCT_VERSION" \
   --install-location "/Library/Application Support/WebBT Server for Firefox" \
-  --root "$BUILD_DIR/staging-arm64" \
-  --scripts "$BUILD_DIR/scripts" \
-  "$BUILD_DIR/webbt-arm64.pkg"
+  --root "$STAGING_DIR/staging-arm64" \
+  --scripts "$STAGING_DIR/scripts" \
+  "$STAGING_DIR/webbt-arm64.pkg"
 
 pkgbuild \
   --identifier webbt.server.macos.x86_64 \
   --version "$PRODUCT_VERSION" \
   --install-location "/Library/Application Support/WebBT Server for Firefox" \
-  --root "$BUILD_DIR/staging-x86_64" \
-  --scripts "$BUILD_DIR/scripts" \
-  "$BUILD_DIR/webbt-x86_64.pkg"
+  --root "$STAGING_DIR/staging-x86_64" \
+  --scripts "$STAGING_DIR/scripts" \
+  "$STAGING_DIR/webbt-x86_64.pkg"
 
 productbuild \
-  --distribution "$BUILD_DIR/distribution.xml" \
+  --distribution "$STAGING_DIR/distribution.xml" \
   --resources "$RESOURCES_DIR" \
-  --package-path "$BUILD_DIR" \
+  --package-path "$STAGING_DIR" \
   "$OUTPUT_PKG"
 
 echo "Built $OUTPUT_PKG"

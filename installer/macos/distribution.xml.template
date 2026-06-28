@@ -5,7 +5,7 @@
   <options customize="never" require-scripts="true" hostArchitectures="arm64,x86_64"/>
   <domains enable_anywhere="false" enable_currentUserHome="true" enable_localSystem="true"/>
   <script>
-    function isArm64() { return system.sysctl('hw.optional.arm64') === '1'; }
+    function isArm64() { return system.sysctl('hw.optional.arm64') == 1; }
   </script>
   <choices-outline>
     <line choice="arm64"/>
