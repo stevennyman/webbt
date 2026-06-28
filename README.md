@@ -55,6 +55,13 @@ Use the System settings app. Go to Apps > Installed apps (you can use the URL `m
 
 To uninstall on macOS, run [installer/macos/uninstall.sh](installer/macos/uninstall.sh) from a terminal. If you installed systemwide, run it with `sudo`.
 
+### Linux
+
+To uninstall on Linux, run the `uninstall.sh` script that was copied into the install directory:
+
+- Per-user install: `"$HOME/.local/share/webbt-server/uninstall.sh"`
+- System-wide install: `sudo /opt/webbt-server/uninstall.sh`
+
 ## Current State
 
 TL;DR - Should work out of the box with most Web Bluetooth apps.
@@ -107,10 +114,11 @@ List of API methods / events and their implementation status:
 * Xcode Command Line Tools (for building the macOS installer)
 * Microsoft Visual C++ v14 Redistributable (required on Windows for both the Rust and legacy C++ BLEServer)
 * Visual Studio 2022 or 2026 Community Edition with "Desktop development with C++" workload installed (for building the legacy Windows C++ BLEServer; Rust also needs this but current only recognizes Visual Studio 2022)
+* BlueZ (required on Linux)
 
 ### Steps
 1. In the `rust_server` directory, run `cargo build`. (For the legacy Windows C++ BLEServer: Open the Visual Studio solution and compile the project.)
-2. Tp build the Windows installer, open the Inno Setup (`.iss`) file and compile and run the installer. (For the legacy Windows C++ BLEServer: Remove `#define USE_RUST`.) To build the macOS pkg, compile `rust_server` for both macOS targets and run `installer/macos/build-pkg.sh`.
+2. Tp build the Windows installer, open the Inno Setup (`.iss`) file and compile and run the installer. (For the legacy Windows C++ BLEServer: Remove `#define USE_RUST`.) To build the macOS pkg, compile `rust_server` for both macOS targets and run `installer/macos/build-pkg.sh`. To build the Linux tarball, compile `rust_server` for all three Linux targets (`x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `i686-unknown-linux-gnu`) and run `installer/linux/build-tarball.sh`.
 4. Install the extension into Firefox using `about:debugging`.
 5. (Optional) Names for GATT characteristics, descriptors, and services can be updated/synchronized with the Bluetooth SIG assigned numbers by updating the `Bluetooth_SIG_UUIDs` submodule then running `update_uuids.py`.
 

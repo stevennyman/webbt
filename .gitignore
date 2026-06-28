@@ -15,3 +15,4 @@ installer/.DS_Store
 installer/macos/.DS_Store
 installer/macos/build/
 installer/macos/resources/
+installer/linux/build/
