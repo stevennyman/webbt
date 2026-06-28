@@ -729,7 +729,7 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    let msg = json!({"_type": "Start", "apiVersion": API_VERSION, "serverName": "rust-server", "serverVersion": "0.6.0"});
+    let msg = json!({"_type": "Start", "apiVersion": API_VERSION, "serverName": "rust-server", "serverVersion": env!("CARGO_PKG_VERSION")});
 
     let _ = write_message(&msg);
 
