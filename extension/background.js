@@ -19,6 +19,8 @@ let infoTabId = null;
 let nativeResolve = null;
 let nativeReady = null;
 
+let pairingPorts = {};
+
 let currentRecommendedUpdateContents = null;
 let currentOptionalUpdateContents = null;
 
@@ -120,7 +122,7 @@ function nativePortOnMessage(msg) {
         serverApiVersion = msg.apiVersion;
     }
     nativeResolve();
-    if (debugPrints) {
+    if (debugPrints && msg._type != 'scanResult') {
         console.log('Received native message:', msg);
     }
     if (msg._type === 'Start') {
@@ -168,8 +170,28 @@ function nativePortOnMessage(msg) {
             }
         }
     }
-    if (msg.pairingType && commandPorts[msg._id]) {
-        commandPorts[msg._id].postMessage(msg);
+    // should be compatible with API v1 and v2 though less customized to API v1 than before
+    if (msg.pairingType) {
+        if (serverApiVersion == 1) {
+            commandPorts[msg._id].postMessage({ ...msg, pairingId: msg._id });
+        } else {
+            // Server API v2+
+            for (const portIt of Object.values(commandPorts)) {
+                try {
+                    portIt.postMessage(msg);
+                    (pairingPorts[msg.pairingId] ??= []).push(portIt);
+                } catch (error) {}
+            }
+        }
+    }
+
+    // not emitted on Server API v1
+    if (msg._type === 'pairing_hideDialog') {
+        for (const portIt of pairingPorts[msg.pairingId]) {
+            try {
+                portIt.postMessage(msg);
+            } catch (error) {}
+        }
     }
     if (msg._type === 'response' && requests[msg._id]) {
         delete commandPorts[msg._id];
@@ -964,11 +986,6 @@ async function accept(port, _id) {
     return await nativeRequest('accept', { origId: _id }, port);
 }
 
-async function acceptPasswordCredential(port, _id, username, password) {
-    return await nativeRequest('acceptPasswordCredential',
-        { origId: _id, username: username, password: password }, port);
-}
-
 async function acceptPin(port, _id, pin) {
     return await nativeRequest('acceptPin', { origId: _id, pin: pin }, port);
 }
@@ -1134,7 +1151,6 @@ const exportedMethods = {
     startNotifications,
     stopNotifications,
     accept,
-    acceptPasswordCredential,
     acceptPin,
     cancel,
     availability,

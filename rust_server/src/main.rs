@@ -3,7 +3,8 @@
 
 use anyhow::{Context, Result};
 use btleplug::api::{
-    Central, CentralEvent, CentralState, CharPropFlags, Manager, Peripheral, ScanFilter, WriteType,
+    Central, CentralEvent, CentralState, CharPropFlags, Manager, PairingEvent, PairingRequestKind,
+    PairingResponse, Peripheral, ScanFilter, WriteType,
 };
 use btleplug::platform::Adapter;
 use futures_lite::Stream;
@@ -13,7 +14,9 @@ use single_instance::SingleInstance;
 use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 use tokio::sync::Semaphore;
+use tokio::time::sleep;
 use uuid::Uuid;
 use webextension_native_messaging::{read_message, write_message};
 
@@ -71,23 +74,37 @@ async fn process_command(command: Value, central: &Adapter) {
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    let execute_fut = async {
-        if let Some(ref id) = device_id {
-            let semaphore = get_device_semaphore(id);
-            let _permit = semaphore.acquire().await.unwrap();
-            execute_command(&command, &central).await
-        } else {
-            execute_command(&command, &central).await
-        }
-    };
+    for i in 0..3 {
+        let execute_fut = async {
+            let cmd_str = command.get("cmd").and_then(|v| v.as_str());
+            let is_pairing_response = cmd_str == Some("accept") || cmd_str == Some("cancel");
 
-    match execute_fut.await {
-        Ok(result) => {
-            response.insert("result".into(), result);
-        }
-        Err(e) => {
-            response.insert("result".into(), Value::Null);
-            response.insert("error".into(), Value::String(e.to_string()));
+            if let Some(ref id) = device_id {
+                if !is_pairing_response {
+                    let semaphore = get_device_semaphore(id);
+                    let _permit = semaphore.acquire().await.unwrap();
+                    execute_command(&command, &central).await
+                } else {
+                    execute_command(&command, &central).await
+                }
+            } else {
+                execute_command(&command, &central).await
+            }
+        };
+
+        match execute_fut.await {
+            Ok(result) => {
+                response.insert("result".into(), result);
+                break;
+            }
+            Err(e) => {
+                if i >= 2 {
+                    response.insert("result".into(), Value::Null);
+                    response.insert("error".into(), Value::String(e.to_string()));
+                } else {
+                    sleep(Duration::from_millis(100)).await;
+                }
+            }
         }
     }
 
@@ -97,7 +114,7 @@ async fn process_command(command: Value, central: &Adapter) {
 async fn execute_command(
     command: &Value,
     central: &Adapter,
-) -> Result<Value, Box<dyn std::error::Error>> {
+) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
     match command.get("cmd") {
         Some(Value::String(t)) => match t.as_str() {
             "ping" => {
@@ -139,6 +156,7 @@ async fn execute_command(
                     .ok_or_else(|| anyhow::anyhow!("No address for connect command"))?;
                 for p in central.peripherals().await.unwrap() {
                     if p.id().to_string() == device_id {
+                        start_pairing_notification_thread(p.clone());
                         if !p.is_connected().await? {
                             p.connect().await?;
                         }
@@ -201,8 +219,8 @@ async fn execute_command(
                                 "notify": v.properties.contains(CharPropFlags::NOTIFY),
                                 "indicate": v.properties.contains(CharPropFlags::INDICATE),
                                 "authenticatedSignedWrites": v.properties.contains(CharPropFlags::AUTHENTICATED_SIGNED_WRITES),
-                                // "reliableWrite": v.properties.contains(CharPropFlags::RELIABLE_WRITE), // TODO requires EXTENDED
-                                // "writableAuxiliaries": v.properties.contains(CharPropFlags::WRITABLE_AUXILIARIES), // TODO requires EXTENDED
+                                "reliableWrite": v.properties.contains(CharPropFlags::RELIABLE_WRITE),
+                                "writableAuxiliaries": v.properties.contains(CharPropFlags::WRITABLE_AUXILIARIES),
                             }
                         }
                     ))
@@ -306,7 +324,38 @@ async fn execute_command(
                 let val = p.write_descriptor(&d, &write_val).await?;
                 return Ok(json!({"uuid": d.uuid, "value": val}));
             }
-            // omitted pairing related functions since btleplug doesn't handle pairing
+            "accept" | "acceptPin" => {
+                let pair_id = command["origId"].clone();
+                // accept/cancel are looked up by pairing id, not device address: the
+                // extension's accept/cancel messages never include a `device` field, since
+                // from its perspective a pairing request is identified solely by its pairing id.
+                let p = peripheral_from_pairing_id(&pair_id, central).await?;
+                let pair_response = match command["pin"].as_str() {
+                    Some(pin) => PairingResponse::Pin(pin.to_string()),
+                    None => PairingResponse::Accept,
+                };
+                p.respond_to_pairing_request(serde_json::from_value(pair_id)?, pair_response)
+                    .await?;
+                // Do not close the pairing dialog here: respond_to_pairing_request succeeding
+                // only means this step of the ceremony was acknowledged, not that pairing is
+                // done. The authoritative close signal is PairingEvent::Outcome, reported by
+                // pairing_notification_thread once PairAsync itself resolves -- the ceremony can
+                // still fail or time out after this point (multi-step ceremonies, or the OS
+                // abandoning the deferral at roughly the same time as this response).
+                return Ok(Value::Null);
+            }
+            "cancel" => {
+                let pair_id = command["origId"].clone();
+                let p = peripheral_from_pairing_id(&pair_id, central).await?;
+                p.respond_to_pairing_request(
+                    serde_json::from_value(pair_id)?,
+                    PairingResponse::Reject,
+                )
+                .await?;
+                // See the comment in "accept" above: closing happens via PairingEvent::Outcome,
+                // not here.
+                return Ok(Value::Null);
+            }
             _ => {}
         },
         Some(_) => {
@@ -349,6 +398,70 @@ fn notification_threads() -> &'static Mutex<HashSet<String>> {
     NOTIFICATION_THREADS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
+fn pairing_notification_threads() -> &'static Mutex<HashSet<String>> {
+    static PAIRING_NOTIFICATION_THREADS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    PAIRING_NOTIFICATION_THREADS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+// Tracks which peripheral owns each in-flight pairing request, keyed by the
+// pairing request's own id (the value also sent to the extension as
+// `pairingId`/`origId`). This lets "accept"/"cancel" find the right
+// peripheral without needing a `device` field -- the extension's accept/cancel
+// messages never include one, since from the extension's perspective a
+// pairing request is identified solely by its pairing id.
+fn pairing_peripherals() -> &'static Mutex<HashMap<String, btleplug::platform::Peripheral>> {
+    static PAIRING_PERIPHERALS: OnceLock<Mutex<HashMap<String, btleplug::platform::Peripheral>>> =
+        OnceLock::new();
+    PAIRING_PERIPHERALS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+// pair_id is the raw `origId` JSON value sent back by the extension; it round-trips
+// the same value originally sent out as `pairingId`, so we key the lookup table
+// with its string form to avoid relying on a specific JSON number/string representation.
+async fn peripheral_from_pairing_id(
+    pair_id: &Value,
+    _central: &Adapter,
+) -> Result<btleplug::platform::Peripheral> {
+    let key = pair_id.to_string();
+    let cached = pairing_peripherals().lock().unwrap().get(&key).cloned();
+    cached.ok_or_else(|| anyhow::anyhow!("No peripheral found for pairing request"))
+}
+
+// Removes a pending pairing request from tracking and tells the extension to
+// stop showing/waiting on its dialog, if it's currently displaying one. Used
+// once a pairing request is resolved (PairingEvent::Outcome) or becomes moot
+// (the peripheral disconnected). No-ops harmlessly if the key isn't tracked
+// (e.g. close_pairing was already called for this id).
+fn close_pairing(key: &str) {
+    let removed = pairing_peripherals().lock().unwrap().remove(key).is_some();
+    if !removed {
+        return;
+    }
+    // `_id` matches what content.js's pairing_hideDialog handler reads;
+    // it carries the same value originally sent out as `pairingId`.
+    let msg = json!({
+        "_type": "pairing_hideDialog",
+        "pairingId": serde_json::from_str::<Value>(key).unwrap_or(Value::Null),
+    });
+    let _ = write_message(&msg);
+}
+
+// Closes every pending pairing request that belongs to the given peripheral.
+// A peripheral disconnecting mid-pairing means whatever dialog the extension
+// is showing (or queuing) for it is no longer answerable.
+fn close_pairings_for_peripheral(peripheral_id: &str) {
+    let keys: Vec<String> = {
+        let map = pairing_peripherals().lock().unwrap();
+        map.iter()
+            .filter(|(_, p)| p.id().to_string() == peripheral_id)
+            .map(|(k, _)| k.clone())
+            .collect()
+    };
+    for key in keys {
+        close_pairing(&key);
+    }
+}
+
 struct ThreadGuard {
     peripheral_id: String,
 }
@@ -359,6 +472,29 @@ impl Drop for ThreadGuard {
             active_threads.remove(&self.peripheral_id);
         }
     }
+}
+
+// only has a purpose on Windows
+fn start_pairing_notification_thread(peripheral: btleplug::platform::Peripheral) {
+    let peripheral_id = peripheral.id().to_string();
+    {
+        let mut active_threads = pairing_notification_threads().lock().unwrap();
+        if !active_threads.insert(peripheral_id.clone()) {
+            return;
+        }
+    }
+
+    tokio::spawn(async move {
+        let _guard = ThreadGuard {
+            peripheral_id: peripheral_id.clone(),
+        };
+        if let Err(e) = pairing_notification_thread(peripheral).await {
+            eprintln!(
+                "Pairing notification thread error for {}: {:?}",
+                peripheral_id, e
+            );
+        }
+    });
 }
 
 fn start_notification_thread(peripheral: btleplug::platform::Peripheral) {
@@ -477,6 +613,55 @@ async fn notification_thread(peripheral: btleplug::platform::Peripheral) -> Resu
     Ok(())
 }
 
+async fn pairing_notification_thread(peripheral: btleplug::platform::Peripheral) -> Result<()> {
+    let mut pairing_notifications = peripheral.pairing_requests().await?;
+
+    while let Some(event) = pairing_notifications.next().await {
+        match event {
+            PairingEvent::Request(request) => {
+                let (pairing_kind, pin) = match request.kind {
+                    PairingRequestKind::ConfirmOnly => ("pairing_confirmOnly", None),
+                    PairingRequestKind::ProvidePin => ("pairing_providePin", None),
+                    PairingRequestKind::ConfirmPinMatch(pin_arg) => {
+                        ("pairing_confirmPinMatch", Some(pin_arg))
+                    }
+                    PairingRequestKind::DisplayPin(pin_arg) => {
+                        ("pairing_displayPin", Some(pin_arg))
+                    }
+                };
+
+                let pairing_id_value = serde_json::to_value(&request.id)?;
+                // Remember which peripheral this pairing request belongs to so that a
+                // later "accept"/"cancel" (which carries only the pairing id, not a
+                // device address) can find the right peripheral to respond on.
+                pairing_peripherals()
+                    .lock()
+                    .unwrap()
+                    .insert(pairing_id_value.to_string(), peripheral.clone());
+
+                // Add timeout/handle multiple concurrent pair requests
+                let res = json!({
+                    "pairingType": true,
+                    "pairingId": pairing_id_value,  // command ID might be different here than in C++
+                    "_type": pairing_kind,
+                    "pin": pin, // null in some cases unlike C++ but should be fine
+                });
+
+                let _ = write_message(&res);
+            }
+            // The ceremony has concluded one way or another (paired, rejected, canceled,
+            // or timed out). This is the authoritative close signal for the dialog the
+            // extension is showing/queuing.
+            PairingEvent::Outcome { id, status } => {
+                let key = serde_json::to_value(&id)?.to_string();
+                eprintln!("Pairing outcome for {}: {:?}", key, status);
+                close_pairing(&key);
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn event_thread(
     mut events: Pin<Box<dyn Stream<Item = CentralEvent> + Send>>,
     central: Adapter,
@@ -504,6 +689,7 @@ async fn event_thread(
                     .lock()
                     .unwrap()
                     .remove(&id.to_string());
+                close_pairings_for_peripheral(&id.to_string());
             }
             // nothing to do here really
             CentralEvent::StateUpdate(_state) => {}
