@@ -89,9 +89,6 @@ async function nativeRequest(cmd, params, port) {
         });
         if (cmd != 'ping') {
             await nativeReady;
-            if (debugPrints) {
-                console.log('nativeReady complete');
-            }
         }
         if (debugPrints) {
             console.log('Sent native message:', msg);
