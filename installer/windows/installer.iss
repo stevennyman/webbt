@@ -60,8 +60,8 @@ Root: HKA; Subkey: "SOFTWARE\Mozilla\NativeMessagingHosts\webbt.server"; ValueTy
 [Files]
 #ifdef USE_RUST
 Source: "..\..\rust_server\target\aarch64-pc-windows-msvc\release\BLEServer.exe"; DestDir: "{app}"; Check: PreferArm64Files; Flags: ignoreversion
-Source: "..\..\rust_server\target\debug\BLEServer.exe"; DestDir: "{app}"; Check: PreferX64Files; Flags: ignoreversion
-; Source: "..\..\rust_server\target\x86_64-pc-windows-msvc\release\BLEServer.exe"; DestDir: "{app}"; Check: PreferX64Files; Flags: ignoreversion
+; Source: "..\..\rust_server\target\debug\BLEServer.exe"; DestDir: "{app}"; Check: PreferX64Files; Flags: ignoreversion
+Source: "..\..\rust_server\target\x86_64-pc-windows-msvc\release\BLEServer.exe"; DestDir: "{app}"; Check: PreferX64Files; Flags: ignoreversion
 Source: "..\..\rust_server\target\i686-pc-windows-msvc\release\BLEServer.exe"; DestDir: "{app}"; Check: PreferX86Files; Flags: ignoreversion
 #else
 Source: "..\..\BLEServer\ARM64\Release\BLEServer.exe"; DestDir: "{app}"; Check: PreferArm64Files; Flags: ignoreversion
