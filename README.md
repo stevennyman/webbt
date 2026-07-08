@@ -6,6 +6,9 @@
 
 This extension enables Web Bluetooth in Firefox on Windows 10 and Windows 11. See [Credits](#credits) for details about the history of this repository including the origin of this fork.
 
+> [!TIP]  
+> Experimental support for Linux and macOS is available on the `server-rust` branch.
+
 ## Installation
 
 1. You need to have Windows 10 Creators Update (version 1703 / build 15063) or newer, and Firefox 128 or newer.
