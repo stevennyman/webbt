@@ -73,70 +73,6 @@ confirm() {
   [[ "$reply" =~ ^[Yy]$ ]]
 }
 
-run_as_root() {
-  if [[ "$(id -u)" -eq 0 ]]; then
-    "$@"
-  elif command -v sudo &>/dev/null; then
-    sudo "$@"
-  else
-    return 1
-  fi
-}
-
-bluetoothd_supports_experimental() {
-  "$BLUETOOTHD_PATH" --help 2>&1 | grep -q -- '--experimental'
-}
-
-bluetoothd_running_with_experimental() {
-  if ! command -v pgrep &>/dev/null; then
-    return 1
-  fi
-  pgrep -af bluetoothd 2>/dev/null | grep -q -- '--experimental'
-}
-
-configure_systemd_bluetooth_experimental() {
-  local override_dir="/etc/systemd/system/bluetooth.service.d"
-  local override_file="$override_dir/10-webbt-experimental.conf"
-  local tmp_file
-  tmp_file="$(mktemp)"
-  cat > "$tmp_file" <<EOF
-[Service]
-ExecStart=
-ExecStart=$BLUETOOTHD_PATH --experimental
-EOF
-
-  if ! run_as_root mkdir -p "$override_dir"; then
-    rm -f "$tmp_file"
-    return 1
-  fi
-  if ! run_as_root install -m 644 "$tmp_file" "$override_file"; then
-    rm -f "$tmp_file"
-    return 1
-  fi
-  rm -f "$tmp_file"
-
-  run_as_root systemctl daemon-reload &&
-    run_as_root systemctl restart bluetooth
-}
-
-attempt_experimental_enable() {
-  local method_label="$1"
-  shift
-
-  log "Attempting $method_label configuration..."
-  if "$@"; then
-    sleep 1
-    if bluetoothd_running_with_experimental; then
-      log "Successfully enabled --experimental using $method_label."
-      return 0
-    fi
-    warn "Bluetooth restarted, but --experimental was not detected in bluetoothd after $method_label configuration."
-  else
-    warn "Automatic $method_label configuration failed."
-  fi
-  return 1
-}
-
 # ---------------------------------------------------------------------------
 # Prerequisite: architecture detection
 # ---------------------------------------------------------------------------
@@ -189,57 +125,18 @@ if command -v systemctl &>/dev/null; then
   fi
 fi
 
-# Check whether bluetoothd supports and is running with --experimental
-echo ""
-if bluetoothd_supports_experimental; then
-  if bluetoothd_running_with_experimental; then
-    log "BlueZ is already running with --experimental."
-  else
-    warn "BlueZ supports --experimental, but bluetoothd is not running with it."
-    echo "WebBT Server works best when BlueZ experimental APIs are enabled."
-    echo "This helps improve LE behavior for dual-mode devices and reduces"
-    echo "BlueZ connection issues (for example: br-connection-unknown)."
+# Warn if the target user is not in the bluetooth group
+TARGET_USER="${SUDO_USER:-$USER}"
+if [[ "$TARGET_USER" != "root" ]]; then
+  if ! id -nG "$TARGET_USER" 2>/dev/null | grep -qw bluetooth; then
     echo ""
-
-    if confirm "Attempt to configure bluetoothd with --experimental now?"; then
-      configured=false
-
-      if command -v systemctl &>/dev/null && systemctl cat bluetooth >/dev/null 2>&1; then
-        if attempt_experimental_enable \
-          "systemd drop-in for bluetooth.service" \
-          configure_systemd_bluetooth_experimental; then
-          configured=true
-        fi
-      fi
-
-      if ! $configured; then
-        echo ""
-        echo "Automatic configuration did not complete. Try one of these methods:"
-        echo "  1) systemd:"
-        echo "     - Add a drop-in override for bluetooth.service with:"
-        echo "         [Service]"
-        echo "         ExecStart="
-        echo "         ExecStart=$BLUETOOTHD_PATH --experimental"
-        echo "     - Then run: sudo systemctl daemon-reload && sudo systemctl restart bluetooth"
-        echo "  2) Non-systemd/custom init:"
-        echo "     - Add --experimental to the bluetoothd command in your service definition,"
-        echo "       then restart the Bluetooth service."
-        echo "     - Common locations to check:"
-        echo "         /etc/default/bluetooth"
-        echo "         /etc/sysconfig/bluetooth"
-        echo "         /etc/conf.d/bluetooth"
-        echo ""
-        echo "If your BlueZ build does not support --experimental at runtime, WebBT Server"
-        echo "can still run, but some dual-mode LE connection paths may be less reliable."
-        echo ""
-      fi
-    else
-      warn "Continuing without --experimental."
-    fi
+    echo "Warning: User '$TARGET_USER' is not in the 'bluetooth' group."
+    echo "On many Linux distributions this is required for WebBT Server to access"
+    echo "Bluetooth. To fix this, run:"
+    echo "  sudo usermod -aG bluetooth $TARGET_USER"
+    echo "Then log out and back in for the change to take effect."
+    echo ""
   fi
-else
-  warn "Your bluetoothd does not advertise --experimental support."
-  warn "WebBT Server will run, but some BLE behavior may be less reliable on dual-mode devices."
 fi
 
 # ---------------------------------------------------------------------------
