@@ -4,7 +4,7 @@
 
 # WebBT for Firefox
 
-This extension enables Web Bluetooth in Firefox on Windows, macOS, and Linux. See [Credits](#credits) for details about the history of this repository including the origin of this fork.
+This extension enables Web Bluetooth in Firefox on Windows, macOS, and Linux (experimental). See [Credits](#credits) for details about the history of this repository including the origin of this fork.
 
 ## System Requirements
 
@@ -14,8 +14,8 @@ This extension enables Web Bluetooth in Firefox on Windows, macOS, and Linux. Se
         * All features generally supported. Reading `txPower` on Windows requires Windows 10 version 2004 (build 19041) or newer.
     * macOS 10.15+
         * Most features generally supported, though the macOS system has some limitations including reduced support for reading descriptors, no access to extended characteristic properties, no `appearance` property on advertisements, cannot subscribe to ANCS/AMS, etc.
-    * Linux
-        * All features generally supported, a few stability issues relating to reconnecting devices.
+    * Linux (experimental)
+        * All features generally supported; support is considered experimental because of `bluez` reliability issues with connecting to devices.
 
 ## Installation
 
@@ -26,7 +26,17 @@ That's it! Enjoy Web Bluetooth in Firefox :-)
 
 ## Troubleshooting
 
-1. If the application is unable to pair your devices (for example throwing an `Unreachable` exception during pairing), rebooting both your computer and your Bluetooth device may solve the problem. You can also try unpairing the devices from each other from the settings on both devices and/or turning Bluetooth off then back on again. On Windows, this can be done from the [Settings app](ms-settings:bluetooth).
+1. (All Operating Systems) If the application is unable to pair your devices (for example throwing an `Unreachable` exception during pairing), rebooting both your computer and your Bluetooth device may solve the problem. You can also try unpairing the devices from each other from the settings on both devices and/or turning Bluetooth off then back on again. On Windows, this can be done from the [Settings app](ms-settings:bluetooth).
+
+2. (Windows, Linux) Try first pairing your device in your OS Settings before using it with a website.
+
+3. (Linux) With dual-mode Bluetooth devices, `bluez` may try to connect to legacy Bluetooth rather than Bluetooth LE, leading to connection errors. Consider unpairing your device from your system if this happens.
+
+4. (Linux, potentially Windows) Devices using resolvable private addresses may not automatically re-pair with devices the second time they are used, as device permissions are stored using the address known upon connection time rather than the address used once paired.
+
+5. (Linux) In some cases, turning off Bluetooth or disconnecting your device from your Linux UI or CLI might cause issues with re-connecting your device until Linux is restarted.
+
+6. (Linux) Consider updating the version of `bluez` installed on your system, available from https://github.com/bluez/bluez. Updating your kernel might also help.
 
 ### Installation issues
 
