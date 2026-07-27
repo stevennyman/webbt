@@ -253,6 +253,11 @@ class DeviceChooserUI {
                     background: #f0d759;
                     margin-bottom: 6px;
                 }
+                
+                #linux-experimental {
+                    background: #f0d759;
+                    margin-bottom: 6px;
+                }
 
                 #optionalUpdate {
                     color: #23222b;
@@ -304,6 +309,9 @@ class DeviceChooserUI {
                 </div>
                 <div id="optionalUpdate" hidden>
                     <span id="optionalUpdateText"></span><br /><a href="https://github.com/stevennyman/webbt/releases" target="_blank">Download Now</a>
+                </div>
+                <div id="linux-experimental" hidden>
+                    <span id="linux-experimental-text">Linux support is experimental. Please see <a href="https://github.com/stevennyman/webbt#troubleshooting" target="_blank">troubleshooting</a> and report any issues as needed. PRs welcome!</span>
                 </div>
                 <div id="buttons">
                     <button id="btn-cancel">Cancel</button>
@@ -384,6 +392,10 @@ class DeviceChooserUI {
 
         if (navigator.platform.includes("Mac")) {
             shadowRoot.getElementById('macos_bluetoothlink')?.removeAttribute('hidden');
+        }
+
+        if (navigator.platform.includes("Linux")) {
+            shadowRoot.getElementById('linux-experimental')?.removeAttribute('hidden');
         }
 
         this.recommendedUpdate = shadowRoot.getElementById('recommendedUpdate');
