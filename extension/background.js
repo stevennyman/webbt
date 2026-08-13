@@ -81,11 +81,12 @@ browser.runtime.onInstalled.addListener((details) => {
 
 async function nativeRequest(cmd, params, port) {
     return new Promise(async (resolve, reject) => {
-        requests[requestId] = { resolve, reject };
-        commandPorts[requestId] = port;
+        const currentRequestId = requestId++;
+        requests[currentRequestId] = { resolve, reject };
+        commandPorts[currentRequestId] = port;
         const msg = Object.assign(params || {}, {
             cmd,
-            _id: requestId++,
+            _id: currentRequestId,
         });
         if (cmd != 'ping') {
             await nativeReady;
@@ -93,14 +94,23 @@ async function nativeRequest(cmd, params, port) {
         if (debugPrints) {
             console.log('Sent native message:', msg);
         }
+        const hostPort = nativePort;
+        if (!hostPort) {
+            delete requests[currentRequestId];
+            delete commandPorts[currentRequestId];
+            reject('WebBT native host is not connected');
+            return;
+        }
         try {
-            nativePort.postMessage(msg);
+            hostPort.postMessage(msg);
         } catch (e) {
             if (debugPrints) {
                 console.log(e);
             }
             nativeResolve();
-            if (nativePort.error && nativePort.error.message.startsWith('No such native application ')) {
+            delete requests[currentRequestId];
+            delete commandPorts[currentRequestId];
+            if (hostPort.error && hostPort.error.message.startsWith('No such native application ')) {
                 await openOrFocusInfoTab();
                 port.postMessage({ _type: 'hideDeviceChooser' });
                 reject('WebBT server not installed. https://github.com/stevennyman/webbt/releases/latest');
@@ -176,7 +186,7 @@ function nativePortOnMessage(msg) {
             for (const portIt of Object.values(commandPorts)) {
                 try {
                     portIt.postMessage(msg);
-                    (pairingPorts[msg.pairingId] ??= []).push(portIt);
+                    (pairingPorts[msg.pairingId] ??= new Set()).add(portIt);
                 } catch (error) {}
             }
         }
@@ -184,11 +194,13 @@ function nativePortOnMessage(msg) {
 
     // not emitted on Server API v1
     if (msg._type === 'pairing_hideDialog') {
-        for (const portIt of pairingPorts[msg.pairingId]) {
+        const pairingPortList = pairingPorts[msg.pairingId] ?? new Set();
+        for (const portIt of pairingPortList) {
             try {
                 portIt.postMessage(msg);
             } catch (error) {}
         }
+        delete pairingPorts[msg.pairingId];
     }
     if (msg._type === 'response' && requests[msg._id]) {
         delete commandPorts[msg._id];
@@ -281,6 +293,17 @@ function removePortFromSubscriptionOrigins(port) {
 
 function nativePortOnDisconnect(port) {
     nativeResolve();
+    if (nativePort !== port) {
+        return;
+    }
+
+    for (const reqId in requests) {
+        requests[reqId].reject(port.error?.message || 'WebBT native host disconnected');
+        delete commandPorts[reqId];
+    }
+    requests = {};
+    commandPorts = {};
+    nativePort = null;
     console.log('Disconnected!', port.error);
 }
 
@@ -349,7 +372,7 @@ async function startScanning(port, name, serviceList = []) {
         await nativeRequest('scan', { name: name, serviceList: serviceList }, port);
     }
     portsObjects.get(port).scanCount++;
-    portsObjects.get(port).scanNames.push[name];
+    portsObjects.get(port).scanNames.push(name);
     scanningCounter++;
 }
 
@@ -359,7 +382,7 @@ async function stopScanning(port, name) {
     portsObjects.get(port).scanCount--;
     removeFirst(portsObjects.get(port).scanNames, name);
     if (!scanningCounter && nativePort && !(nativePort.error)) {
-        nativeRequest('stopScan', {}, port);
+        await nativeRequest('stopScan', {}, port);
     }
 }
 
@@ -809,6 +832,7 @@ async function gattConnect(port, webId) {
         currentOriginDevices.push({
             address: address, name: portsObjects.get(port).deviceIdNames[address], gattId: gattId,
         });
+        needUpdate = true;
     }
     if (needUpdate) {
         await browser.storage.local.set({ [storageKey]: currentOriginDevices });
@@ -1199,11 +1223,16 @@ chrome.runtime.onConnect.addListener((port) => {
     }
 
     port.onDisconnect.addListener(async () => {
-        const disconnects = [...portsObjects.get(port).devices]
+        const portState = portsObjects.get(port);
+        if (!portState) {
+            return;
+        }
+
+        const disconnects = [...portState.devices]
             .map(gattId => gattDisconnect(port, null, gattId));
         await Promise.allSettled(disconnects);
-        while (portsObjects.get(port).scanCount > 0) {
-            await stopScanning(port, portsObjects.get(port).scanNames.pop());
+        while (portState.scanCount > 0) {
+            await stopScanning(port, portState.scanNames.pop());
         }
         for (const value of Object.values(subscriptions)) {
             value.delete(port);
@@ -1213,7 +1242,7 @@ chrome.runtime.onConnect.addListener((port) => {
         // close the dedicated host process if nothing else is using it
         if (port.sender.url != browser.runtime.getURL('options.html')) {
             activePorts--;
-            if (!activePorts) {
+            if (!activePorts && nativePort) {
                 nativePort.disconnect();
                 nativePort = null;
             }
