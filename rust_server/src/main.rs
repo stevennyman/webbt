@@ -14,7 +14,7 @@ use single_instance::SingleInstance;
 use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, OnceLock};
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, mpsc};
 use uuid::Uuid;
 use webextension_native_messaging::{read_message, write_message};
 
@@ -693,6 +693,30 @@ async fn get_central(manager: &btleplug::platform::Manager) -> Option<Adapter> {
     adapters.into_iter().next()
 }
 
+// Native-messaging reads are synchronous. Keep them off Tokio's worker threads;
+// otherwise a blocked stdin read can starve the BlueZ event task (especially on
+// single-core Linux systems).
+fn start_message_reader()
+-> mpsc::UnboundedReceiver<Result<Value, webextension_native_messaging::MessagingError>> {
+    let (sender, receiver) = mpsc::unbounded_channel();
+    std::thread::spawn(move || {
+        loop {
+            match read_message::<Value>() {
+                Ok(message) => {
+                    if sender.send(Ok(message)).is_err() {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    let _ = sender.send(Err(error));
+                    break;
+                }
+            }
+        }
+    });
+    receiver
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let instance = SingleInstance::new("BLEServer").unwrap();
@@ -711,10 +735,24 @@ async fn main() -> anyhow::Result<()> {
     // only start the events thread if we have an adapter
     // just one thread for device/advertisement events
     if let Some(ref c) = central {
-        let events = c.events().await?;
         let central_clone = c.clone();
         tokio::spawn(async move {
-            let _ = event_thread(events, central_clone).await;
+            loop {
+                match central_clone.events().await {
+                    Ok(events) => {
+                        if let Err(error) = event_thread(events, central_clone.clone()).await {
+                            eprintln!("Bluetooth event thread error: {:?}", error);
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!("Unable to subscribe to Bluetooth events: {:?}", error);
+                    }
+                }
+
+                // A BlueZ/D-Bus restart or a closed event stream should not
+                // permanently disable disconnect notifications.
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
         });
     }
 
@@ -722,8 +760,9 @@ async fn main() -> anyhow::Result<()> {
 
     let _ = write_message(&msg);
 
-    loop {
-        match read_message::<Value>() {
+    let mut messages = start_message_reader();
+    while let Some(message_result) = messages.recv().await {
+        match message_result {
             Ok(message) => {
                 // respond to availability without requiring an Adapter
                 if message.get("cmd").and_then(|v| v.as_str()) == Some("availability") {

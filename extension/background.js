@@ -213,8 +213,15 @@ function nativePortOnMessage(msg) {
         const device = devices[gattId];
         if (device) {
             device.forEach(async port => {
-                port.postMessage({ event: 'disconnectEvent', device: (await gattIdToWebId(gattId, port)) });
-                portsObjects.get(port).devices.delete(gattId);
+                try {
+                    const webId = await gattIdToWebId(gattId, port);
+                    if (webId !== null) {
+                        port.postMessage({ event: 'disconnectEvent', device: webId });
+                    }
+                    portsObjects.get(port)?.devices.delete(gattId);
+                } catch (error) {
+                    console.error('Unable to forward disconnect event:', error);
+                }
             });
             delete characteristicCache[gattId];
             delete devices[gattId];
@@ -1192,9 +1199,9 @@ chrome.runtime.onConnect.addListener((port) => {
     }
 
     port.onDisconnect.addListener(async () => {
-        for (let gattDevice of portsObjects.get(port).devices.values()) {
-            gattDisconnect(port, gattDevice);
-        }
+        const disconnects = [...portsObjects.get(port).devices]
+            .map(gattId => gattDisconnect(port, null, gattId));
+        await Promise.allSettled(disconnects);
         while (portsObjects.get(port).scanCount > 0) {
             await stopScanning(port, portsObjects.get(port).scanNames.pop());
         }
