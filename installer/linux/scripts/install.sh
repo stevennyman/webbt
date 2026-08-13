@@ -125,20 +125,6 @@ if command -v systemctl &>/dev/null; then
   fi
 fi
 
-# Warn if the target user is not in the bluetooth group
-TARGET_USER="${SUDO_USER:-$USER}"
-if [[ "$TARGET_USER" != "root" ]]; then
-  if ! id -nG "$TARGET_USER" 2>/dev/null | grep -qw bluetooth; then
-    echo ""
-    echo "Warning: User '$TARGET_USER' is not in the 'bluetooth' group."
-    echo "On many Linux distributions this is required for WebBT Server to access"
-    echo "Bluetooth. To fix this, run:"
-    echo "  sudo usermod -aG bluetooth $TARGET_USER"
-    echo "Then log out and back in for the change to take effect."
-    echo ""
-  fi
-fi
-
 # ---------------------------------------------------------------------------
 # BLEServer running check (like macOS preinstall)
 # ---------------------------------------------------------------------------
