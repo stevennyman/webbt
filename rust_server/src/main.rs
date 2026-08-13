@@ -404,6 +404,62 @@ fn pairing_peripherals() -> &'static Mutex<HashMap<String, btleplug::platform::P
     PAIRING_PERIPHERALS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn write_disconnect_event(device_id: &str) {
+    let _ = write_message(&json!({
+        "_type": "disconnectEvent",
+        "device": device_id,
+    }));
+}
+
+fn mark_device_connected(connected_devices: &Mutex<HashSet<String>>, device_id: &str) {
+    connected_devices
+        .lock()
+        .unwrap()
+        .insert(device_id.to_string());
+}
+
+fn remember_device(known_devices: &Mutex<HashSet<String>>, device_id: &str) {
+    known_devices.lock().unwrap().insert(device_id.to_string());
+}
+
+fn mark_device_disconnected(connected_devices: &Mutex<HashSet<String>>, device_id: &str) -> bool {
+    connected_devices.lock().unwrap().remove(device_id)
+}
+
+fn handle_device_disconnected(connected_devices: &Mutex<HashSet<String>>, device_id: &str) {
+    if mark_device_disconnected(connected_devices, device_id) {
+        write_disconnect_event(device_id);
+    }
+
+    // Allow a fresh notification thread to be started on reconnect.
+    notification_threads().lock().unwrap().remove(device_id);
+    close_pairings_for_peripheral(device_id);
+}
+
+async fn poll_connected_devices(
+    central: &Adapter,
+    connected_devices: &Mutex<HashSet<String>>,
+    known_devices: &Mutex<HashSet<String>>,
+) {
+    let Ok(peripherals) = central.peripherals().await else {
+        return;
+    };
+
+    let known_devices = known_devices.lock().unwrap().clone();
+    for peripheral in peripherals {
+        let device_id = peripheral.id().to_string();
+        if !known_devices.contains(&device_id) {
+            continue;
+        }
+
+        match peripheral.is_connected().await {
+            Ok(true) => mark_device_connected(connected_devices, &device_id),
+            Ok(false) => handle_device_disconnected(connected_devices, &device_id),
+            Err(_) => {}
+        }
+    }
+}
+
 // pair_id is the raw `origId` JSON value sent back by the extension; it round-trips
 // the same value originally sent out as `pairingId`, so we key the lookup table
 // with its string form to avoid relying on a specific JSON number/string representation.
@@ -654,37 +710,48 @@ async fn pairing_notification_thread(peripheral: btleplug::platform::Peripheral)
 async fn event_thread(
     mut events: Pin<Box<dyn Stream<Item = CentralEvent> + Send>>,
     central: Adapter,
+    connected_devices: Arc<Mutex<HashSet<String>>>,
+    known_devices: Arc<Mutex<HashSet<String>>>,
 ) -> anyhow::Result<()> {
-    while let Some(event) = events.next().await {
-        match event {
-            CentralEvent::DeviceDiscovered(id)
-            | CentralEvent::DeviceUpdated(id)
-            | CentralEvent::DeviceServicesModified(id)
-            | CentralEvent::ManufacturerDataAdvertisement { id, .. }
-            | CentralEvent::ServiceDataAdvertisement { id, .. }
-            | CentralEvent::ServicesAdvertisement { id, .. }
-            | CentralEvent::RssiUpdate { id, .. } => {
-                let Ok(peripheral) = central.peripheral(&id).await else {
-                    continue;
+    let mut poll_timer = tokio::time::interval(std::time::Duration::from_secs(30));
+
+    loop {
+        tokio::select! {
+            event = events.next() => {
+                let Some(event) = event else {
+                    return Ok(());
                 };
-                let _ = write_peripheral_info(&peripheral).await;
+
+                match event {
+                    CentralEvent::DeviceDiscovered(id)
+                    | CentralEvent::DeviceUpdated(id)
+                    | CentralEvent::DeviceServicesModified(id)
+                    | CentralEvent::ManufacturerDataAdvertisement { id, .. }
+                    | CentralEvent::ServiceDataAdvertisement { id, .. }
+                    | CentralEvent::ServicesAdvertisement { id, .. }
+                    | CentralEvent::RssiUpdate { id, .. } => {
+                        let Ok(peripheral) = central.peripheral(&id).await else {
+                            continue;
+                        };
+                        let _ = write_peripheral_info(&peripheral).await;
+                    }
+                    CentralEvent::DeviceConnected(id) => {
+                        let device_id = id.to_string();
+                        remember_device(&known_devices, &device_id);
+                        mark_device_connected(&connected_devices, &device_id);
+                    }
+                    CentralEvent::DeviceDisconnected(id) => {
+                        handle_device_disconnected(&connected_devices, &id.to_string());
+                    }
+                    // nothing to do here really
+                    CentralEvent::StateUpdate(_state) => {}
+                }
             }
-            CentralEvent::DeviceConnected(_id) => {}
-            CentralEvent::DeviceDisconnected(id) => {
-                let _ =
-                    write_message(&json!({"_type": "disconnectEvent", "device": id.to_string()}));
-                // Allow a fresh notification thread to be started on reconnect
-                notification_threads()
-                    .lock()
-                    .unwrap()
-                    .remove(&id.to_string());
-                close_pairings_for_peripheral(&id.to_string());
+            _ = poll_timer.tick() => {
+                poll_connected_devices(&central, &connected_devices, &known_devices).await;
             }
-            // nothing to do here really
-            CentralEvent::StateUpdate(_state) => {}
         }
     }
-    Ok(())
 }
 
 // event thread for CentralEvents
@@ -736,11 +803,20 @@ async fn main() -> anyhow::Result<()> {
     // just one thread for device/advertisement events
     if let Some(ref c) = central {
         let central_clone = c.clone();
+        let connected_devices = Arc::new(Mutex::new(HashSet::new()));
+        let known_devices = Arc::new(Mutex::new(HashSet::new()));
         tokio::spawn(async move {
             loop {
                 match central_clone.events().await {
                     Ok(events) => {
-                        if let Err(error) = event_thread(events, central_clone.clone()).await {
+                        if let Err(error) = event_thread(
+                            events,
+                            central_clone.clone(),
+                            connected_devices.clone(),
+                            known_devices.clone(),
+                        )
+                        .await
+                        {
                             eprintln!("Bluetooth event thread error: {:?}", error);
                         }
                     }
