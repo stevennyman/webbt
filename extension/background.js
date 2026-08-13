@@ -244,6 +244,14 @@ function nativePortOnMessage(msg) {
                 delete subscriptions[key];
             }
         }
+        for (const origin of Object.keys(subscriptionOrigins)) {
+            subscriptionOrigins[origin] = subscriptionOrigins[origin].filter(
+                ([subscriptionGattId]) => subscriptionGattId !== gattId,
+            );
+            if (!subscriptionOrigins[origin].length) {
+                delete subscriptionOrigins[origin];
+            }
+        }
     }
 }
 
@@ -413,6 +421,20 @@ function processPrefixMask(elem, elemInner) {
     return true;
 }
 
+function canonicalizeFilterBytes(value, name) {
+    let bytes;
+    if (Array.isArray(value)) {
+        bytes = new Uint8Array(value);
+    } else if (value instanceof ArrayBuffer) {
+        bytes = new Uint8Array(value);
+    } else if (ArrayBuffer.isView(value)) {
+        bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    } else {
+        throw new TypeError(`${name} must be a BufferSource`);
+    }
+    return bytes;
+}
+
 function matchDeviceFilter(filter, device) {
     if (filter.services) {
         const deviceServices = device.serviceUuids.map(normalizeServiceUuid);
@@ -428,41 +450,20 @@ function matchDeviceFilter(filter, device) {
     }
 
     if (filter.manufacturerData) {
-        let companyIdentifierFlag = false;
-        for (const elem of device.manufacturerData) {
-            for (const elemInner of filter.manufacturerData) {
-                if (!elemInner.companyIdentifier) {
-                    throw new Error('manufacturerData is missing required companyIdentifier');
-                }
-                if (elem.companyIdentifier == elemInner.companyIdentifier) {
-                    companyIdentifierFlag = true;
-                    if (processPrefixMask(elem, elemInner) === false) {
-                        return false;
-                    }
-                }
-            }
-        }
-        if (!companyIdentifierFlag) {
+        const companyIdentifierMatch = filter.manufacturerData.every(elemInner =>
+            device.manufacturerData.some(elem =>
+                elem.companyIdentifier == elemInner.companyIdentifier && processPrefixMask(elem, elemInner)));
+        if (!companyIdentifierMatch) {
             return false;
         }
     }
 
     if (filter.serviceData) {
-        let serviceFlag = false;
-        for (const elem of device.serviceData) {
-            for (const elemInner of filter.serviceData) {
-                if (!elemInner.service) {
-                    throw new Error('serviceData is missing required service');
-                }
-                if (normalizeServiceUuid(elem.service) == normalizeServiceUuid(elemInner.service)) {
-                    serviceFlag = true;
-                    if (processPrefixMask(elem, elemInner) === false) {
-                        return false;
-                    }
-                }
-            }
-        }
-        if (!serviceFlag) {
+        const serviceDataMatch = filter.serviceData.every(elemInner =>
+            device.serviceData.some(elem =>
+                normalizeServiceUuid(elem.service) === normalizeServiceUuid(elemInner.service) &&
+                processPrefixMask(elem, elemInner)));
+        if (!serviceDataMatch) {
             return false;
         }
     }
@@ -471,6 +472,7 @@ function matchDeviceFilter(filter, device) {
 
 const webIdToGattIdMap = {};
 const webIdToAddressMap = {};
+const gattIdToWebIdMap = {};
 
 // caching function for webId to gattId conversions since browser storage access can be a bit slow
 async function webIdToGattId(webId, port = null, origin = null) {
@@ -526,44 +528,105 @@ async function webIdToAddress(webId, port = null, origin = null) {
     }
 }
 
-// TODO: this function (infrequently used) does not cache values and may be slow
 async function gattIdToWebId(gattId, port = null, origin = null) {
     if (origin === null) {
         origin = port.sender.origin;
     }
-    const storageKey = 'originDevices_'+origin;
-    if (!(origin in webIdToAddressMap)) {
-        webIdToAddressMap[origin] = {};
+    if (!(origin in gattIdToWebIdMap)) {
+        gattIdToWebIdMap[origin] = {};
     }
-
+    if (gattId in gattIdToWebIdMap[origin]) {
+        return gattIdToWebIdMap[origin][gattId];
+    }
+    const storageKey = 'originDevices_'+origin;
     const currentOriginDevices = (await browser.storage.local.get({ [storageKey]: [] }))[storageKey];
-    let compl = false;
     for (const dev of currentOriginDevices) {
         if (dev.gattId === gattId) {
-            compl = true;
-            // webIdToAddressMap[origin][webId] = dev.address;
+            gattIdToWebIdMap[origin][gattId] = dev.webId;
             return dev.webId;
         }
     }
-    if (!compl) {
-        return null;
-    }
+    return null;
 }
 
 async function requestDevice(port, options) {
     if ((!options.filters && !options.acceptAllDevices) || (options.filters && options.acceptAllDevices)) {
-        // TODO better filters validation, proper error message
-        // Most validation is implemented except for empty list checks
         throw new Error('One of filters or acceptAllDevices must be provided');
+    }
+    if (options.filters && (!Array.isArray(options.filters) || !options.filters.length)) {
+        throw new Error('filters must be a non-empty array');
     }
     if (options.exclusionFilters && ! options.filters) {
         throw new Error('exclusionFilters requires filters');
     }
 
-    // TODO TEMPORARY WORKAROUND for Rust on Linux issue
-    options.filters = null;
-    options.acceptAllDevices = true;
-    // End workaround
+    for (const filter of [...(options.filters ?? []), ...(options.exclusionFilters ?? [])]) {
+        if (!filter || typeof filter !== 'object') {
+            throw new Error('Device filters must be objects');
+        }
+        if (filter.services && (!Array.isArray(filter.services) || !filter.services.length)) {
+            throw new Error('services must be a non-empty array');
+        }
+        if (filter.manufacturerData &&
+            (!Array.isArray(filter.manufacturerData) || !filter.manufacturerData.length)) {
+            throw new Error('manufacturerData must be a non-empty array');
+        }
+        if (filter.serviceData &&
+            (!Array.isArray(filter.serviceData) || !filter.serviceData.length)) {
+            throw new Error('serviceData must be a non-empty array');
+        }
+        if (!filter.services && !filter.name && !filter.namePrefix &&
+            !filter.manufacturerData && !filter.serviceData) {
+            throw new Error('Each filter must specify a service, name, namePrefix, manufacturerData, or serviceData');
+        }
+        if (filter.manufacturerData) {
+            const companyIdentifiers = new Set();
+            for (const elem of filter.manufacturerData) {
+                if (!elem || typeof elem !== 'object') {
+                    throw new TypeError('manufacturerData entries must be objects');
+                }
+                if (elem.companyIdentifier === undefined || elem.companyIdentifier === null) {
+                    throw new TypeError('manufacturerData is missing required companyIdentifier');
+                }
+                const companyIdentifier = Number(elem.companyIdentifier);
+                if (!Number.isInteger(companyIdentifier) || companyIdentifier < 0 || companyIdentifier > 0xffff) {
+                    throw new TypeError('companyIdentifier must be an unsigned short');
+                }
+                if (companyIdentifiers.has(companyIdentifier)) {
+                    throw new TypeError('manufacturerData must not contain duplicate companyIdentifier values');
+                }
+                companyIdentifiers.add(companyIdentifier);
+                elem.companyIdentifier = companyIdentifier;
+                if (elem.dataPrefix !== undefined) {
+                    const dataPrefix = canonicalizeFilterBytes(elem.dataPrefix, 'dataPrefix');
+                    if (!dataPrefix.length) {
+                        throw new TypeError('dataPrefix must not be empty');
+                    }
+                    elem.dataPrefix = dataPrefix;
+                    if (elem.mask !== undefined) {
+                        const mask = canonicalizeFilterBytes(elem.mask, 'mask');
+                        if (mask.length !== dataPrefix.length) {
+                            throw new TypeError('mask length must equal dataPrefix length');
+                        }
+                        elem.mask = mask;
+                    }
+                } else if (elem.mask !== undefined) {
+                    const mask = canonicalizeFilterBytes(elem.mask, 'mask');
+                    if (mask.length !== 0) {
+                        throw new TypeError('mask length must equal dataPrefix length');
+                    }
+                    elem.mask = mask;
+                }
+            }
+        }
+        if (filter.serviceData) {
+            for (const elem of filter.serviceData) {
+                if (!elem.service) {
+                    throw new Error('serviceData is missing required service');
+                }
+            }
+        }
+    }
 
     const serviceList = [];
     let forceClearServiceList = false;
@@ -582,20 +645,6 @@ async function requestDevice(port, options) {
         }
         if (forceClearServiceList) {
             serviceList.length = 0;
-        }
-        if (options.filters.manufacturerData) {
-            for (const elem of options.filters.manufacturerData) {
-                if (!elem.companyIdentifier) {
-                    throw new Error('manufacturerData is missing required companyIdentifier');
-                }
-            }
-        }
-        if (options.filters.serviceData) {
-            for (const elem of options.filters.serviceData) {
-                if (!elem.service) {
-                    throw new Error('serviceData is missing required service');
-                }
-            }
         }
     }
 
@@ -674,6 +723,7 @@ async function requestDevice(port, options) {
             if (currentOriginDevices[i].address === deviceAddress) {
                 currentWebId = currentOriginDevices[i].webId;
                 alreadyInStorage = true;
+                currentOriginDevices[i].gattId = gattId;
                 if (!(currentOriginDevices[i].name === deviceNames[deviceAddress])) {
                     // hopefully this doesn't cause valuable names to be lost
                     currentOriginDevices[i].name = deviceNames[deviceAddress];
@@ -693,6 +743,9 @@ async function requestDevice(port, options) {
             currentOriginDevices.push({
                 address: deviceAddress, name: deviceNames[deviceAddress], gattId: gattId, webId: currentWebId,
             });
+        }
+        if (gattId) {
+            (gattIdToWebIdMap[port.sender.origin] ??= {})[gattId] = currentWebId;
         }
         await browser.storage.local.set({ [storageKey]: currentOriginDevices });
 
@@ -728,20 +781,24 @@ async function watchAdvertisements(port, webId) {
         return { exception: 'UnknownError' };
     }
 
-    if ('dev_'+port+gattId in listenercnts) {
-        listenercnts['dev_'+port.sender.contextId+gattId]++;
-        return;
-    } else {
-        listenercnts['dev_'+port.sender.contextId+gattId] = 1;
+    if (!await nativeRequest('availability', {}, port)) {
+        return { exception: 'InvalidStateError' };
     }
 
-    // TODO: throw InvalidStateError if Bluetooth off
+    const listenerKey = 'dev_'+port.sender.contextId+gattId;
+    if (listenerKey in listenercnts) {
+        listenercnts[listenerKey]++;
+        return;
+    } else {
+        listenercnts[listenerKey] = 1;
+    }
 
     portsObjects.get(port).knownDeviceIds.add(address);
     portsObjects.get(port).knownGattIds.add(gattId);
 
     function scanResultListener(msg) {
-        msg = structuredClone(msg); // todo: is this necessary?
+        // Do not mutate the native message before other listeners receive it.
+        msg = structuredClone(msg);
         if (msg._type === 'scanResult') {
             msg._type = 'adScanResult';
             msg.subscriptionId = 'scanRequest_'+webId;
@@ -955,7 +1012,6 @@ async function writeValueWithoutResponse(port, webId, service, characteristic, v
 
 async function startNotifications(port, webId, service, characteristic) {
     let gattId = await webIdToGattId(webId, port);
-    trackOriginSubscription(port.sender.origin, gattId, service, characteristic, port);
     // Rust (API v2) server must return subscriptionNames in this format
     const subscriptionName =
         'subscription_'+gattId+'_'+windowsServiceUuid(service)+'_'+
@@ -963,6 +1019,7 @@ async function startNotifications(port, webId, service, characteristic) {
     // already notifying for this port
     if (subscriptions[subscriptionName] && subscriptions[subscriptionName].size && serverApiVersion === 2) {
         subscriptions[subscriptionName].add(port);
+        trackOriginSubscription(port.sender.origin, gattId, service, characteristic, port);
         return subscriptionName;
     }
     const subscriptionId = await nativeRequest('subscribe', {
@@ -971,11 +1028,11 @@ async function startNotifications(port, webId, service, characteristic) {
         characteristic: windowsCharacteristicUuid(characteristic),
     }, port);
 
-    // TODO: refactor this?
     if (!subscriptions[subscriptionId]) {
         subscriptions[subscriptionId] = new Set();
     }
     subscriptions[subscriptionId].add(port);
+    trackOriginSubscription(port.sender.origin, gattId, service, characteristic, port);
     return subscriptionId;
 }
 
@@ -985,7 +1042,16 @@ async function stopNotifications(port, webId, service, characteristic) {
     const subscriptionName =
         'subscription_'+gattId+'_'+windowsServiceUuid(service)+'_'+
         windowsCharacteristicUuid(characteristic);
-    if (subscriptions[subscriptionName] && subscriptions[subscriptionName].size != 1 && serverApiVersion === 2) {
+    const originSubscriptions = subscriptionOrigins[port.sender.origin] ?? [];
+    const trackedSubscription = originSubscriptions.some(
+        ([subscriptionGattId, subscriptionService, subscriptionCharacteristic, subscriptionPort]) =>
+            subscriptionGattId === gattId && subscriptionService === service &&
+            subscriptionCharacteristic === characteristic && subscriptionPort === port,
+    );
+    if (!trackedSubscription) {
+        return serverApiVersion === 2 ? subscriptionName : undefined;
+    }
+    if (subscriptions[subscriptionName] && subscriptions[subscriptionName].size > 1 && serverApiVersion === 2) {
         subscriptions[subscriptionName].delete(port);
         untrackOriginSubscription(port.sender.origin, gattId, service, characteristic, port);
         return subscriptionName;
@@ -1000,9 +1066,11 @@ async function stopNotifications(port, webId, service, characteristic) {
 
     if (subscriptionId && subscriptions[subscriptionId]) {
         subscriptions[subscriptionId].delete(port);
-        if (!subscriptions[subscriptionId].size) {
-            delete subscriptions[subscriptionId];
-        }
+    }
+    if (serverApiVersion === 2) {
+        delete subscriptions[subscriptionName];
+    } else if (subscriptionId && subscriptions[subscriptionId] && !subscriptions[subscriptionId].size) {
+        delete subscriptions[subscriptionId];
     }
 
     untrackOriginSubscription(port.sender.origin, gattId, service, characteristic, port);
@@ -1099,6 +1167,10 @@ async function getOriginDevices(port) {
 async function forgetDevice(port, webId, origin = null) {
     const desiredOrigin = (origin ?? port.sender.origin);
     let address = await webIdToAddress(webId, null, desiredOrigin);
+    const gattId = await webIdToGattId(webId, null, desiredOrigin);
+    if (address === null) {
+        return;
+    }
     const storageKey = 'originDevices_'+desiredOrigin;
     const currentOriginDevices = (await browser.storage.local.get({ [storageKey]: [] }))[storageKey];
     for (let i = 0; i < currentOriginDevices.length; i++) {
@@ -1116,8 +1188,7 @@ async function forgetDevice(port, webId, origin = null) {
             // gattDisconnect removes from devices and disconnects
             await gattDisconnect(portObj[0], webId);
             portObj[1].knownDeviceIds.delete(address);
-
-            // TODO check this
+            portObj[1].knownGattIds.delete(gattId);
             const devIdNames = portObj[1].deviceIdNames;
             delete devIdNames[address];
         }
@@ -1125,8 +1196,8 @@ async function forgetDevice(port, webId, origin = null) {
 
     // also remove from subscriptions
     if (desiredOrigin in subscriptionOrigins) {
-        for (const [gattId, service, characteristic, subPort] of [...subscriptionOrigins[desiredOrigin]]) {
-            if (typeof gattId === 'string' && gattId.endsWith(address)) {
+        for (const [subscriptionGattId, service, characteristic, subPort] of [...subscriptionOrigins[desiredOrigin]]) {
+            if (subscriptionGattId === gattId) {
                 await stopNotifications(subPort, webId, service, characteristic);
             }
         }
@@ -1135,22 +1206,15 @@ async function forgetDevice(port, webId, origin = null) {
     // also stop advertisements
     await stopAdvertisements(port, webId, true);
 
-    // TODO refactor connection to primarily use gatt IDs?
-
     if (desiredOrigin in webIdToGattIdMap) {
-        for (const possibleAddress of Object.entries(webIdToGattIdMap[desiredOrigin])) {
-            if (possibleAddress[1].endsWith(address)) {
-                delete webIdToGattIdMap[desiredOrigin][possibleAddress[0]];
-            }
-        }
+        delete webIdToGattIdMap[desiredOrigin][webId];
     }
 
     if (desiredOrigin in webIdToAddressMap) {
-        for (const possibleAddress of Object.entries(webIdToAddressMap[desiredOrigin])) {
-            if (possibleAddress[1] == address) {
-                delete webIdToAddressMap[desiredOrigin][possibleAddress[0]];
-            }
-        }
+        delete webIdToAddressMap[desiredOrigin][webId];
+    }
+    if (desiredOrigin in gattIdToWebIdMap && gattId !== null) {
+        delete gattIdToWebIdMap[desiredOrigin][gattId];
     }
 
     if (currentOriginDevices.length === 0) {

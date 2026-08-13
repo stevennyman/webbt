@@ -110,28 +110,6 @@ async fn execute_command(
                 return Ok(Value::String("pong".into()));
             }
             "scan" => {
-                // TODO possibly clear peripheral list if no active connections?
-                // let service_list: Vec<Uuid> = command.get("serviceList")
-                //     .and_then(|v| v.as_array())
-                //     .map(|arr| {
-                //         arr.iter()
-                //             .filter_map(|v| v.as_str())
-                //             .filter_map(|s| Uuid::parse_str(s).ok())
-                //             .collect()
-                //     })
-                //     .unwrap_or_default();
-
-                // we'll ignore the filter for now since the client filters itself
-                // and we don't want to miss peripherals in future cached rounds
-                // also multiple webpages can be using this scan
-                // let scan_filter = ScanFilter { services: service_list };
-
-                // iterate current peripherals
-                // for p in central.peripherals().await.unwrap() {
-                //     let _ = write_peripheral_info(&p).await;
-                // }
-
-                // central.start_scan(scan_filter).await?;
                 central.start_scan(ScanFilter::default()).await?;
                 return Ok(Value::Null);
             }
@@ -159,7 +137,6 @@ async fn execute_command(
                 if p.is_connected().await? {
                     p.disconnect().await?;
                 }
-                // TODO terminate any notification streams?
                 return Ok(Value::Null);
             }
             "services" => {
