@@ -42,7 +42,7 @@ async fn write_peripheral_info(peripheral: &btleplug::platform::Peripheral) -> a
         "bluetoothAddress": peripheral.id().to_string(),
         "rssi": properties.rssi.map(|r| json!(r)).unwrap_or(Value::Null),
         "localName": properties.local_name.unwrap_or_else(|| peripheral.id().to_string()),
-        "appearance": properties.appearance.unwrap_or_else(|| 0),
+        "appearance": properties.appearance.unwrap_or(0),
         "txPower": properties.tx_power_level.map(|p| json!(p)).unwrap_or(Value::Null),
         "serviceUuids": properties.services,
         "manufacturerData": properties.manufacturer_data
@@ -79,12 +79,12 @@ async fn process_command(command: Value, central: &Adapter) {
         if !is_pairing_response {
             let semaphore = get_device_semaphore(id);
             let _permit = semaphore.acquire().await.unwrap();
-            execute_command(&command, &central).await
+            execute_command(&command, central).await
         } else {
-            execute_command(&command, &central).await
+            execute_command(&command, central).await
         }
     } else {
-        execute_command(&command, &central).await
+        execute_command(&command, central).await
     };
 
     match result {
@@ -143,7 +143,7 @@ async fn execute_command(
                 let device_id = command["address"]
                     .as_str()
                     .ok_or_else(|| anyhow::anyhow!("No address for connect command"))?;
-                for p in central.peripherals().await.unwrap() {
+                for p in central.peripherals().await? {
                     if p.id().to_string() == device_id {
                         start_pairing_notification_thread(p.clone());
                         if !p.is_connected().await? {
@@ -179,7 +179,7 @@ async fn execute_command(
                         .map(|v| v.uuid)
                         .filter(|v| v == &service_uuid)
                         .collect::<Vec<Uuid>>();
-                    if res.len() == 0 {
+                    if res.is_empty() {
                         return Err("Service not found".into());
                     }
                     return Ok(json!(res));
@@ -240,8 +240,8 @@ async fn execute_command(
                 if command["cmd"] == "writeWithResponse" {
                     write_type = WriteType::WithResponse;
                 }
-                let res = p.write(&characteristic, &write_val, write_type).await?;
-                return Ok(json!(res));
+                p.write(&characteristic, &write_val, write_type).await?;
+                return Ok(Value::Null);
             }
             "subscribe" => {
                 let p = peripheral_from_command_device_string(command, central).await?;
@@ -292,7 +292,7 @@ async fn execute_command(
                 }
                 for d in characteristic.descriptors {
                     let val = p.read_descriptor(&d).await?;
-                    if descriptor_uuid.map_or(true, |uuid| uuid == d.uuid) {
+                    if descriptor_uuid.is_none_or(|uuid| uuid == d.uuid) {
                         res.push(json!({"uuid": d.uuid, "value": val}));
                     }
                 }
@@ -310,8 +310,8 @@ async fn execute_command(
                         u8::try_from(n).map_err(|_| "Value items must be in range 0-255")
                     })
                     .collect::<Result<Vec<u8>, _>>()?;
-                let val = p.write_descriptor(&d, &write_val).await?;
-                return Ok(json!({"uuid": d.uuid, "value": val}));
+                p.write_descriptor(&d, &write_val).await?;
+                return Ok(json!({"uuid": d.uuid, "value": Value::Null}));
             }
             "accept" | "acceptPin" => {
                 let pair_id = command["origId"].clone();
@@ -509,11 +509,12 @@ fn close_pairings_for_peripheral(peripheral_id: &str) {
 
 struct ThreadGuard {
     peripheral_id: String,
+    active_threads: &'static Mutex<HashSet<String>>,
 }
 
 impl Drop for ThreadGuard {
     fn drop(&mut self) {
-        if let Ok(mut active_threads) = notification_threads().lock() {
+        if let Ok(mut active_threads) = self.active_threads.lock() {
             active_threads.remove(&self.peripheral_id);
         }
     }
@@ -532,6 +533,7 @@ fn start_pairing_notification_thread(peripheral: btleplug::platform::Peripheral)
     tokio::spawn(async move {
         let _guard = ThreadGuard {
             peripheral_id: peripheral_id.clone(),
+            active_threads: pairing_notification_threads(),
         };
         if let Err(e) = pairing_notification_thread(peripheral).await {
             eprintln!(
@@ -554,6 +556,7 @@ fn start_notification_thread(peripheral: btleplug::platform::Peripheral) {
     tokio::spawn(async move {
         let _guard = ThreadGuard {
             peripheral_id: peripheral_id.clone(),
+            active_threads: notification_threads(),
         };
         if let Err(e) = notification_thread(peripheral).await {
             eprintln!("Notification thread error for {}: {:?}", peripheral_id, e);
@@ -568,7 +571,7 @@ async fn peripheral_from_command_device_string(
     let device_id = command["device"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("No address for connect command"))?;
-    for p in central.peripherals().await.unwrap() {
+    for p in central.peripherals().await? {
         if p.id().to_string() == device_id {
             return Ok(p);
         }
@@ -624,7 +627,7 @@ async fn descriptor_from_command_string(
     peripheral: &btleplug::platform::Peripheral,
 ) -> Result<btleplug::api::Descriptor> {
     let characteristic =
-        characteristic_from_command_string(command, central, Some(&peripheral)).await?;
+        characteristic_from_command_string(command, central, Some(peripheral)).await?;
     let descriptor_uuid = command["descriptor"]
         .as_str()
         .and_then(|v| Uuid::parse_str(v).ok())
@@ -675,7 +678,7 @@ async fn pairing_notification_thread(peripheral: btleplug::platform::Peripheral)
                     }
                 };
 
-                let pairing_id_value = serde_json::to_value(&request.id)?;
+                let pairing_id_value = serde_json::to_value(request.id)?;
                 // Remember which peripheral this pairing request belongs to so that a
                 // later "accept"/"cancel" (which carries only the pairing id, not a
                 // device address) can find the right peripheral to respond on.
@@ -698,7 +701,7 @@ async fn pairing_notification_thread(peripheral: btleplug::platform::Peripheral)
             // or timed out). This is the authoritative close signal for the dialog the
             // extension is showing/queuing.
             PairingEvent::Outcome { id, status } => {
-                let key = serde_json::to_value(&id)?.to_string();
+                let key = serde_json::to_value(id)?.to_string();
                 eprintln!("Pairing outcome for {}: {:?}", key, status);
                 close_pairing(&key);
             }
@@ -797,40 +800,53 @@ async fn main() -> anyhow::Result<()> {
     let manager = btleplug::platform::Manager::new().await?;
     // currently this just uses the first adapter, a possible future expansion would be to allow selecting an adapter in the UI
     // the Web Bluetooth spec doesn't seem to handle multiple adapters, and btleplug only supports multiple adapters on Linux
-    let central = get_central(&manager).await;
+    let central = Arc::new(Mutex::new(get_central(&manager).await));
 
-    // only start the events thread if we have an adapter
-    // just one thread for device/advertisement events
-    if let Some(ref c) = central {
-        let central_clone = c.clone();
+    // Keep looking for an adapter if none was present at startup. This also
+    // recreates the event stream after a BlueZ/D-Bus restart.
+    let central_for_events = central.clone();
+    tokio::spawn(async move {
         let connected_devices = Arc::new(Mutex::new(HashSet::new()));
         let known_devices = Arc::new(Mutex::new(HashSet::new()));
-        tokio::spawn(async move {
-            loop {
-                match central_clone.events().await {
-                    Ok(events) => {
-                        if let Err(error) = event_thread(
-                            events,
-                            central_clone.clone(),
-                            connected_devices.clone(),
-                            known_devices.clone(),
-                        )
-                        .await
-                        {
-                            eprintln!("Bluetooth event thread error: {:?}", error);
-                        }
+
+        loop {
+            let current_adapter = { central_for_events.lock().unwrap().clone() };
+            let adapter = match current_adapter {
+                Some(adapter) => adapter,
+                None => match get_central(&manager).await {
+                    Some(adapter) => {
+                        *central_for_events.lock().unwrap() = Some(adapter.clone());
+                        adapter
                     }
-                    Err(error) => {
-                        eprintln!("Unable to subscribe to Bluetooth events: {:?}", error);
+                    None => {
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        continue;
+                    }
+                },
+            };
+
+            match adapter.events().await {
+                Ok(events) => {
+                    if let Err(error) = event_thread(
+                        events,
+                        adapter.clone(),
+                        connected_devices.clone(),
+                        known_devices.clone(),
+                    )
+                    .await
+                    {
+                        eprintln!("Bluetooth event thread error: {:?}", error);
                     }
                 }
-
-                // A BlueZ/D-Bus restart or a closed event stream should not
-                // permanently disable disconnect notifications.
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                Err(error) => {
+                    eprintln!("Unable to subscribe to Bluetooth events: {:?}", error);
+                }
             }
-        });
-    }
+
+            *central_for_events.lock().unwrap() = None;
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+    });
 
     let msg = json!({"_type": "Start", "apiVersion": API_VERSION, "serverName": "rust-server", "serverVersion": env!("CARGO_PKG_VERSION")});
 
@@ -842,7 +858,7 @@ async fn main() -> anyhow::Result<()> {
             Ok(message) => {
                 // respond to availability without requiring an Adapter
                 if message.get("cmd").and_then(|v| v.as_str()) == Some("availability") {
-                    let avail = central.is_some();
+                    let avail = central.lock().unwrap().is_some();
                     let mut response = Map::new();
                     response.insert("_type".into(), "response".into());
                     let cmd_id = message.get("_id").and_then(|v| v.as_i64()).unwrap_or(-1);
@@ -853,12 +869,12 @@ async fn main() -> anyhow::Result<()> {
                 }
 
                 // for other commands, require an adapter
-                if let Some(ref c) = central {
+                let current_adapter = { central.lock().unwrap().clone() };
+                if let Some(c) = current_adapter {
                     if matches!(c.adapter_state().await, Ok(state) if state != CentralState::PoweredOff)
                     {
-                        let central_for_task = c.clone();
                         tokio::spawn(async move {
-                            process_command(message, &central_for_task).await;
+                            process_command(message, &c).await;
                         });
                     } else {
                         let mut response = Map::new();
