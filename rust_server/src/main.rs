@@ -14,9 +14,7 @@ use single_instance::SingleInstance;
 use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
 use tokio::sync::Semaphore;
-use tokio::time::sleep;
 use uuid::Uuid;
 use webextension_native_messaging::{read_message, write_message};
 
@@ -74,37 +72,28 @@ async fn process_command(command: Value, central: &Adapter) {
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    for i in 0..3 {
-        let execute_fut = async {
-            let cmd_str = command.get("cmd").and_then(|v| v.as_str());
-            let is_pairing_response = cmd_str == Some("accept") || cmd_str == Some("cancel");
+    let cmd_str = command.get("cmd").and_then(|v| v.as_str());
+    let is_pairing_response = cmd_str == Some("accept") || cmd_str == Some("cancel");
 
-            if let Some(ref id) = device_id {
-                if !is_pairing_response {
-                    let semaphore = get_device_semaphore(id);
-                    let _permit = semaphore.acquire().await.unwrap();
-                    execute_command(&command, &central).await
-                } else {
-                    execute_command(&command, &central).await
-                }
-            } else {
-                execute_command(&command, &central).await
-            }
-        };
+    let result = if let Some(ref id) = device_id {
+        if !is_pairing_response {
+            let semaphore = get_device_semaphore(id);
+            let _permit = semaphore.acquire().await.unwrap();
+            execute_command(&command, &central).await
+        } else {
+            execute_command(&command, &central).await
+        }
+    } else {
+        execute_command(&command, &central).await
+    };
 
-        match execute_fut.await {
-            Ok(result) => {
-                response.insert("result".into(), result);
-                break;
-            }
-            Err(e) => {
-                if i >= 2 {
-                    response.insert("result".into(), Value::Null);
-                    response.insert("error".into(), Value::String(e.to_string()));
-                } else {
-                    sleep(Duration::from_millis(100)).await;
-                }
-            }
+    match result {
+        Ok(result) => {
+            response.insert("result".into(), result);
+        }
+        Err(e) => {
+            response.insert("result".into(), Value::Null);
+            response.insert("error".into(), Value::String(e.to_string()));
         }
     }
 
