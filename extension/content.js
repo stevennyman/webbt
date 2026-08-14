@@ -498,6 +498,10 @@ class DeviceChooserUI {
         this.recommendedUpdate.hidden = true;
     }
 
+    hideOptionalUpdate() {
+        this.optionalUpdate.hidden = true;
+    }
+
     winError() {
         this.chooserDialog.close();
         this.onCancel();
