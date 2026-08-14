@@ -374,10 +374,10 @@ function windowsDescriptorUuid(uuid) {
 }
 
 let scanningCounter = 0;
-async function startScanning(port, name, serviceList = []) {
+async function startScanning(port, name) {
     await nativeReady;
     if (!scanningCounter) {
-        await nativeRequest('scan', { name: name, serviceList: serviceList }, port);
+        await nativeRequest('scan', { name: name }, port);
     }
     portsObjects.get(port).scanCount++;
     portsObjects.get(port).scanNames.push(name);
@@ -628,26 +628,6 @@ async function requestDevice(port, options) {
         }
     }
 
-    const serviceList = [];
-    let forceClearServiceList = false;
-    if (options.filters) {
-        // optimization for Rust implementation
-        // Rust implementation allows us to filter for devices advertising at least one service
-        // But if any filter contains no services, we cannot use this optimization
-        for (const filter of options.filters) {
-            if (filter.services && filter.services.length) {
-                for (const serv of filter.services) {
-                    serviceList.push(normalizeServiceUuid(serv));
-                }
-            } else {
-                forceClearServiceList = true;
-            }
-        }
-        if (forceClearServiceList) {
-            serviceList.length = 0;
-        }
-    }
-
     let deviceNames = {};
     let deviceRssi = {};
     const SCAN_NAME = 'requestDevice_'+port.sender.contextId;
@@ -679,7 +659,7 @@ async function requestDevice(port, options) {
         currentOptionalUpdateContents: currentOptionalUpdateContents,
     });
     try {
-        await startScanning(port, SCAN_NAME, serviceList);
+        await startScanning(port, SCAN_NAME);
     } catch (error) {
         if (error == 'The device is not ready for use.\r\n\r\nThe device is not ready for use.\r\n'
             || error == 'No Bluetooth adapter available or Bluetooth is turned off in your system settings.') {
