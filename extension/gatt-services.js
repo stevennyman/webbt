@@ -70,6 +70,7 @@ const STANDARD_GATT_SERVICES = {
     scan_parameters: 0x1813,
     telephone_bearer: 0x184B,
     telephony_and_media_audio: 0x1855,
+    tire_pressure_monitoring_system: 0x1860,
     transport_discovery: 0x1824,
     tx_power: 0x1804,
     user_data: 0x181C,
