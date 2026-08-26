@@ -303,10 +303,10 @@ echo "  Mozilla Add-ons:   https://addons.mozilla.org/firefox/addon/webbt/"
 echo "  Or GitHub Release:  https://github.com/stevennyman/webbt/releases"
 echo ""
 if $SYSTEM_INSTALL; then
-  echo "To uninstall later (all users):"
+  echo "To uninstall (all users):"
   echo "  sudo \"$INSTALL_DIR/uninstall.sh\""
 else
-  echo "To uninstall later:"
+  echo "To uninstall:"
   echo "  \"$INSTALL_DIR/uninstall.sh\""
 fi
 echo ""

@@ -138,7 +138,7 @@ cat > "$RESOURCES_DIR/conclusion.html" <<EOF
 <body>
   <h1>Installation Complete</h1>
   <p>WebBT Server for Firefox $PRODUCT_VERSION has been installed.</p>
-  <p>To uninstall later, run the command for the installation type you chose:</p>
+  <p>To uninstall, run the command for the installation type you chose:</p>
   <p>Current user: <code>"\$HOME/Library/Application Support/WebBT Server for Firefox/uninstall.sh"</code></p>
   <p>All users: <code>sudo "/Library/Application Support/WebBT Server for Firefox/uninstall.sh"</code></p>
   <p><u><b>Important</b></u>: WebBT server requires the <a href="https://addons.mozilla.org/firefox/addon/webbt/">WebBT for Firefox</a> extension installed for Web Bluetooth to be used.</p>

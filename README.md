@@ -63,14 +63,35 @@ Use the System settings app. Go to Apps > Installed apps (you can use the URL `m
 
 ### macOS
 
-To uninstall on macOS, run [installer/macos/uninstall.sh](installer/macos/uninstall.sh) from a terminal. If you installed systemwide, run it with `sudo`.
+To uninstall, run the command for the installation type you chose:
+
+Current user:
+
+```sh
+"$HOME/Library/Application Support/WebBT Server for Firefox/uninstall.sh"
+```
+
+All users:
+
+```sh
+sudo "/Library/Application Support/WebBT Server for Firefox/uninstall.sh"
+```
 
 ### Linux
 
-To uninstall on Linux, run the `uninstall.sh` script that was copied into the install directory:
+To uninstall, run the command for the installation type you chose:
 
-- Per-user install: `"$HOME/.local/share/webbt-server/uninstall.sh"`
-- System-wide install: `sudo /opt/webbt-server/uninstall.sh`
+Current user:
+
+```sh
+"$HOME/.local/share/webbt-server/uninstall.sh"
+```
+
+All users:
+
+```sh
+sudo /opt/webbt-server/uninstall.sh
+```
 
 ## Current State
 

@@ -30,12 +30,14 @@ Installation
 Uninstallation
 --------------
 
-To uninstall, run the uninstall script:
+To uninstall, run the command for the installation type you chose:
 
-- If you installed for the current user:
-  ~/.local/share/webbt-server/uninstall.sh
+Current user:
 
-- If you installed system-wide:
+  "$HOME/.local/share/webbt-server/uninstall.sh"
+
+All users:
+
   sudo /opt/webbt-server/uninstall.sh
 
 Troubleshooting
