@@ -344,6 +344,21 @@ function normalizeServiceUuid(uuid) {
     return normalizeUuid(uuid, STANDARD_GATT_SERVICES);
 }
 
+function addResolvedAdvertisementMetadata(msg) {
+    if (msg.appearance !== null && msg.appearance !== undefined) {
+        const appearanceName = STANDARD_GATT_APPEARANCES[msg.appearance];
+        if (appearanceName && msg.appearance !== 0) {
+            msg.appearanceName = appearanceName;
+        }
+    }
+    const manufacturerNames = (msg.manufacturerData ?? [])
+        .map(entry => BLUETOOTH_COMPANY_IDENTIFIERS[entry.companyIdentifier])
+        .filter(Boolean);
+    if (manufacturerNames.length) {
+        msg.manufacturerName = [...new Set(manufacturerNames)].join(', ');
+    }
+}
+
 function normalizeCharacteristicUuid(uuid) {
     return normalizeUuid(uuid, STANDARD_GATT_CHARACTERISTICS);
 }
@@ -641,6 +656,7 @@ async function requestDevice(port, options) {
             for (let i = 0; i < msg.serviceData.length; i++) {
                 msg.serviceData[i].service = normalizeServiceUuid(msg.serviceData[i].service);
             }
+            addResolvedAdvertisementMetadata(msg);
             deviceRssi[msg.bluetoothAddress] = msg.rssi;
             if (options.acceptAllDevices ||
                 options.filters.some(filter => matchDeviceFilter(filter, msg))) {
@@ -1282,6 +1298,12 @@ chrome.runtime.onConnect.addListener((port) => {
             value.delete(port);
         }
         removePortFromSubscriptionOrigins(port);
+        for (const pairingId of Object.keys(pairingPorts)) {
+            pairingPorts[pairingId].delete(port);
+            if (!pairingPorts[pairingId].size) {
+                delete pairingPorts[pairingId];
+            }
+        }
 
         // close the dedicated host process if nothing else is using it
         if (port.sender.url != browser.runtime.getURL('options.html')) {

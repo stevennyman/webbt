@@ -21,6 +21,8 @@
             "gatt-services.js",
             "gatt-characteristics.js",
             "gatt-descriptors.js",
+            "gatt-appearances.js",
+            "company-identifiers.js",
             "background.js"
         ]
     },

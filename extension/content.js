@@ -89,7 +89,14 @@ function portMsg(message) {
 
     if (message._type === 'scanResult') {
         if (chooserUI) {
-            chooserUI.updateDevice(message.bluetoothAddress, message.localName, message.gattId);
+            chooserUI.updateDevice(
+                message.bluetoothAddress,
+                message.localName,
+                message.gattId,
+                message.appearanceName,
+                message.manufacturerName,
+                message.rssi,
+            );
         }
         return;
     }
@@ -226,6 +233,58 @@ class DeviceChooserUI {
                     cursor: pointer;
                 }
 
+                .device-name {
+                    font-weight: bold;
+                }
+
+                .device-header {
+                    align-items: center;
+                    display: flex;
+                    gap: 8px;
+                    justify-content: space-between;
+                }
+
+                .signal-strength {
+                    align-items: end;
+                    display: flex;
+                    gap: 2px;
+                    height: 14px;
+                    padding: 0 2px;
+                }
+
+                .signal-bar {
+                    background: #8a8a8a;
+                    border-radius: 1px;
+                    display: block;
+                    width: 3px;
+                }
+
+                .signal-bar:nth-child(1) {
+                    height: 4px;
+                }
+
+                .signal-bar:nth-child(2) {
+                    height: 7px;
+                }
+
+                .signal-bar:nth-child(3) {
+                    height: 10px;
+                }
+
+                .signal-bar:nth-child(4) {
+                    height: 14px;
+                }
+
+                .signal-bar.active {
+                    background: #286c8f;
+                }
+
+                .device-metadata {
+                    color: #555;
+                    font-size: 0.9em;
+                    margin-top: 2px;
+                }
+
                 .device-item:hover {
                     background: #ddddee;
                 }
@@ -233,6 +292,10 @@ class DeviceChooserUI {
                 .device-item.selected {
                     background: #aaaaff;
                     color: white;
+                }
+
+                .device-item.selected .device-metadata {
+                    color: #eeeeff;
                 }
 
                 #buttons, #buttons_nobluetooth, .pairing-buttons {
@@ -514,11 +577,14 @@ class DeviceChooserUI {
     }
 
     pair() {
+        if (this.btnPair.disabled) {
+            return;
+        }
         this.hide();
         this.onPair(this.selectedDeviceId, this.selectedGattId);
     }
 
-    updateDevice(address, name, gattId) {
+    updateDevice(address, name, gattId, appearanceName, manufacturerName, rssi) {
         let deviceElement = this.shadowRoot.querySelector(`.device-item[bluetoothId='${address}']`);
         if (!deviceElement) {
             deviceElement = document.createElement('div');
@@ -527,8 +593,29 @@ class DeviceChooserUI {
             deviceElement.setAttribute('bluetoothId', address);
             deviceElement.setAttribute('gattId', gattId);
             deviceElement.classList.add('device-item');
-            deviceElement.innerText = address.toUpperCase();
+            const deviceHeader = document.createElement('div');
+            deviceHeader.classList.add('device-header');
+            const deviceName = document.createElement('div');
+            deviceName.classList.add('device-name');
+            deviceHeader.appendChild(deviceName);
+            const signalStrength = document.createElement('span');
+            signalStrength.classList.add('signal-strength');
+            signalStrength.setAttribute('role', 'img');
+            for (let i = 0; i < 4; i++) {
+                const signalBar = document.createElement('span');
+                signalBar.classList.add('signal-bar');
+                signalStrength.appendChild(signalBar);
+            }
+            deviceHeader.appendChild(signalStrength);
+            deviceElement.appendChild(deviceHeader);
+            const deviceMetadata = document.createElement('div');
+            deviceMetadata.classList.add('device-metadata');
+            deviceElement.appendChild(deviceMetadata);
             deviceElement.addEventListener('click', () => this.selectDevice(address, deviceElement, gattId));
+            deviceElement.addEventListener('dblclick', () => {
+                this.selectDevice(address, deviceElement, gattId);
+                this.pair();
+            });
             deviceElement.addEventListener('keydown', e => {
                 if (e.keyCode === 13 || e.keyCode === 32) {
                     this.selectDevice(address, deviceElement, gattId);
@@ -536,10 +623,26 @@ class DeviceChooserUI {
             });
             this.deviceListElement.appendChild(deviceElement);
         }
-        if (name) {
-            deviceElement.innerText = name;
-        }
-        // TODO indicate RSSI
+        deviceElement.querySelector('.device-name').textContent = name || address.toUpperCase();
+        const signalStrength = deviceElement.querySelector('.signal-strength');
+        const signalLevel = Number.isFinite(rssi)
+            ? rssi >= -60 ? 4 : rssi >= -75 ? 3 : rssi >= -90 ? 2 : 1
+            : 0;
+        signalStrength.querySelectorAll('.signal-bar').forEach((bar, index) => {
+            bar.classList.toggle('active', index < signalLevel);
+        });
+        signalStrength.setAttribute(
+            'aria-label',
+            signalLevel ? `Signal strength: ${['', 'Very weak', 'Weak', 'Good', 'Excellent'][signalLevel]}`
+                : 'Signal strength unavailable',
+        );
+        signalStrength.title = signalStrength.getAttribute('aria-label');
+        const metadata = [appearanceName, manufacturerName]
+            .filter(Boolean)
+            .join(' | ');
+        const metadataElement = deviceElement.querySelector('.device-metadata');
+        metadataElement.textContent = metadata;
+        metadataElement.hidden = !metadata;
         // TODO handle duplicate device names?
     }
 
