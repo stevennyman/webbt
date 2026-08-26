@@ -5,8 +5,9 @@ set -euo pipefail
 SYSTEM_INSTALL_ROOT="/Library/Application Support/WebBT Server for Firefox"
 SYSTEM_MANIFEST_DIR="/Library/Application Support/Mozilla/NativeMessagingHosts"
 USER_MANIFEST_DIR="$HOME/Library/Application Support/Mozilla/NativeMessagingHosts"
+INSTALL_ROOT="${2:?missing package install location}"
 
-if [[ "$DSTROOT" == "$SYSTEM_INSTALL_ROOT" ]]; then
+if [[ "$INSTALL_ROOT" == "$SYSTEM_INSTALL_ROOT" ]]; then
   manifest_dir="$SYSTEM_MANIFEST_DIR"
 else
   manifest_dir="$USER_MANIFEST_DIR"
@@ -18,7 +19,7 @@ cat > "$manifest_dir/webbt.server.json" <<EOF
 {
   "name": "webbt.server",
   "description": "Web Bluetooth Extension Server",
-  "path": "$DSTROOT/WebBT Server.app/Contents/MacOS/BLEServer",
+  "path": "$INSTALL_ROOT/WebBT Server.app/Contents/MacOS/BLEServer",
   "type": "stdio",
   "allowed_extensions": [
     "webbt@ff"

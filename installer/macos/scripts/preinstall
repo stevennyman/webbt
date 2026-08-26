@@ -6,6 +6,7 @@ SYSTEM_INSTALL_ROOT="/Library/Application Support/WebBT Server for Firefox"
 USER_INSTALL_ROOT="$HOME/Library/Application Support/WebBT Server for Firefox"
 SYSTEM_MANIFEST="/Library/Application Support/Mozilla/NativeMessagingHosts/webbt.server.json"
 USER_MANIFEST="$HOME/Library/Application Support/Mozilla/NativeMessagingHosts/webbt.server.json"
+INSTALL_ROOT="${2:?missing package install location}"
 
 # $USER and $HOME are set correctly by the macOS installer sandbox even when running as root
 USER_UID=$(id -u "$USER")
@@ -38,7 +39,7 @@ if pgrep -x BLEServer >/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ "$DSTROOT" == "$SYSTEM_INSTALL_ROOT" ]]; then
+if [[ "$INSTALL_ROOT" == "$SYSTEM_INSTALL_ROOT" ]]; then
   if [[ -d "$USER_INSTALL_ROOT" || -f "$USER_MANIFEST" ]]; then
     echo "WebBT installer: A current-user installation already exists. It will be removed so this all-users installation can be used."
     if has_gui; then
