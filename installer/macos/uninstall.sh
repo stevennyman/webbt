@@ -32,10 +32,20 @@ fi
 
 removed_user=false
 removed_system=false
+user_removal_failed=false
 
 if $user_exists; then
-  rm -rf "$USER_INSTALL_ROOT" "$USER_MANIFEST"
-  removed_user=true
+  if rm -rf "$USER_INSTALL_ROOT" "$USER_MANIFEST" 2>/dev/null &&
+     [[ ! -e "$USER_INSTALL_ROOT" && ! -e "$USER_MANIFEST" ]]; then
+    removed_user=true
+  else
+    log "The user installation could not be removed. It may require sudo."
+    user_removal_failed=true
+  fi
+fi
+
+if $user_removal_failed && ! $system_exists; then
+  exit 1
 fi
 
 if $system_exists; then
