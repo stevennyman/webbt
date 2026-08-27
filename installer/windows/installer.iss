@@ -2,10 +2,16 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "WebBT Server for Firefox"
-#define MyAppVersion "0.6.0"
 #define MyAppPublisher "Steven Nyman"
 
+#ifndef MyAppVersion
+#define MyAppVersion "0.6.0"
+#endif
+
 #define USE_RUST
+#ifdef LEGACY_CPP
+#undef USE_RUST
+#endif
 
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application. Do not use the same AppId value in installers for other applications.

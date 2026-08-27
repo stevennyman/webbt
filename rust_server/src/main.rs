@@ -766,11 +766,13 @@ fn start_message_reader()
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let instance = SingleInstance::new("BLEServer").unwrap();
-    assert!(
-        instance.is_single(),
-        "Only one instance of WebBT Server is allowed at a time."
-    );
+    let instance = SingleInstance::new("BLEServer")
+        .context("Could not initialize the WebBT Server instance lock")?;
+    if !instance.is_single() {
+        return Err(anyhow::anyhow!(
+            "Only one instance of WebBT Server is allowed at a time."
+        ));
+    }
 
     // tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 

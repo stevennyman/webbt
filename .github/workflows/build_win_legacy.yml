@@ -1,0 +1,49 @@
+name: Build Windows Legacy C++
+on:
+  workflow_dispatch:
+
+jobs:
+  Build_Windows_Legacy_CPP:
+    runs-on: windows-latest
+
+    steps:
+      - name: Add msbuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Checkout repo
+        uses: actions/checkout@v6
+
+      - name: Compile legacy C++ release
+        run: |
+          cd BLEServer
+          msbuild BLEServer.sln /p:Configuration=Release /p:Platform=ARM64
+          msbuild BLEServer.sln /p:Configuration=Release /p:Platform=x64
+          msbuild BLEServer.sln /p:Configuration=Release /p:Platform=x86
+
+      - name: Upload ARM64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BLEServer-Legacy-Cpp-ARM64
+          path: BLEServer\ARM64\Release\BLEServer.exe
+
+      - name: Upload x64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BLEServer-Legacy-Cpp-x64
+          path: BLEServer\x64\Release\BLEServer.exe
+
+      - name: Upload x86 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BLEServer-Legacy-Cpp-x86
+          path: BLEServer\Release\BLEServer.exe
+
+      - name: Compile legacy installer
+        run: |
+          iscc /DLEGACY_CPP /DMyAppVersion=0.5.3 installer\windows\installer.iss
+
+      - name: Upload legacy installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Installer-Legacy-Cpp-0.5.3
+          path: installer\windows\output\*

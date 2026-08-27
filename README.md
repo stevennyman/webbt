@@ -148,10 +148,18 @@ List of API methods / events and their implementation status:
 * BlueZ (required on Linux)
 
 ### Steps
-1. In the `rust_server` directory, run `cargo build`. (For the legacy Windows C++ BLEServer: Open the Visual Studio solution and compile the project.)
-2. Tp build the Windows installer, open the Inno Setup (`.iss`) file and compile and run the installer. (For the legacy Windows C++ BLEServer: Remove `#define USE_RUST`.) To build the macOS pkg, compile `rust_server` for both macOS targets and run `installer/macos/build-pkg.sh`. To build the Linux tarball, compile `rust_server` for all three Linux targets (`x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `i686-unknown-linux-gnu`) and run `installer/linux/build-tarball.sh`.
-4. Install the extension into Firefox using `about:debugging`.
-5. (Optional) Names for GATT characteristics, descriptors, and services can be updated/synchronized with the Bluetooth SIG assigned numbers by updating the `Bluetooth_SIG_UUIDs` submodule then running `update_uuids.py`.
+1. Build the Rust server for all supported architectures using the script for your platform:
+    * Windows: run `rust_server\build-release.cmd` from a Windows command prompt.
+    * macOS: run `rust_server/build-release-macos.sh`.
+    * Linux: run `rust_server/build-release-linux.sh`. Cross-compilers for the ARM64 and i686 targets are required.
+2. Build the corresponding installer:
+    * Windows Rust installer: open `installer/windows/installer.iss` with Inno Setup and compile it.
+    * macOS package: run `installer/macos/build-pkg.sh`.
+    * Linux tarball: run `installer/linux/build-tarball.sh`.
+3. Install the extension into Firefox using `about:debugging`.
+4. (Optional) Names for GATT characteristics, descriptors, and services can be updated/synchronized with the Bluetooth SIG assigned numbers by updating the `Bluetooth_SIG_UUIDs` submodule then running `update_uuids.py`.
+
+> **Legacy Windows C++ server:** Version 0.5.3 remains available separately. Open `BLEServer/BLEServer.sln` in Visual Studio and compile the required platforms, then compile `installer/windows/installer.iss` with `/DLEGACY_CPP /DMyAppVersion=0.5.3`.
 
 ## Credits
 

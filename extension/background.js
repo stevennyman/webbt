@@ -1,6 +1,6 @@
 const SUPPORTED_HOST_API_VERSIONS = [1, 2];
 
-let debugPrints = true; // false
+let debugPrints = false;
 
 let requestId = 0;
 let requests = {};
