@@ -796,10 +796,9 @@ async fn event_thread(
                     }
                     CentralEvent::DeviceDisconnected(id) => {
                         let device_id = id.to_string();
-                        forget_disconnected_device(&connected_devices, &device_id);
-                        // A platform disconnect event is authoritative even if
-                        // the matching connect event was missed during suspend.
-                        write_disconnect_event(&device_id);
+                        if forget_disconnected_device(&connected_devices, &device_id) {
+                            write_disconnect_event(&device_id);
+                        }
                     }
                     CentralEvent::StateUpdate(CentralState::PoweredOff) => {
                         handle_all_devices_disconnected(&connected_devices);
