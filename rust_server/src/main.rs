@@ -14,11 +14,37 @@ use single_instance::SingleInstance;
 use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, OnceLock};
-use tokio::sync::{Semaphore, mpsc};
+use tokio::sync::{Mutex as AsyncMutex, Semaphore, mpsc};
 use uuid::Uuid;
 use webextension_native_messaging::{read_message, write_message};
 
 const API_VERSION: i32 = 2;
+
+fn scan_users() -> &'static AsyncMutex<usize> {
+    static SCAN_USERS: OnceLock<AsyncMutex<usize>> = OnceLock::new();
+    SCAN_USERS.get_or_init(|| AsyncMutex::new(0))
+}
+
+async fn acquire_scan_user(central: &Adapter) -> Result<()> {
+    let mut users = scan_users().lock().await;
+    if *users == 0 {
+        central.start_scan(ScanFilter::default()).await?;
+    }
+    *users += 1;
+    Ok(())
+}
+
+async fn release_scan_user(central: &Adapter) -> Result<()> {
+    let mut users = scan_users().lock().await;
+    if *users == 0 {
+        return Ok(());
+    }
+    *users -= 1;
+    if *users == 0 {
+        central.stop_scan().await?;
+    }
+    Ok(())
+}
 
 fn device_semaphores() -> &'static Mutex<HashMap<String, Arc<Semaphore>>> {
     static SEMAPHORES: OnceLock<Mutex<HashMap<String, Arc<Semaphore>>>> = OnceLock::new();
@@ -100,6 +126,41 @@ async fn process_command(command: Value, central: &Adapter) {
     let _ = write_message(&response);
 }
 
+async fn find_current_peripheral(
+    central: &Adapter,
+    device_id: &str,
+) -> Result<Option<btleplug::platform::Peripheral>> {
+    for peripheral in central.peripherals().await? {
+        if peripheral.id().to_string() == device_id {
+            return Ok(Some(peripheral));
+        }
+    }
+    Ok(None)
+}
+
+async fn find_peripheral_for_connection(
+    central: &Adapter,
+    device_id: &str,
+) -> Result<btleplug::platform::Peripheral> {
+    if let Some(peripheral) = find_current_peripheral(central, device_id).await? {
+        return Ok(peripheral);
+    }
+
+    acquire_scan_user(central).await?;
+    let result = async {
+        for _ in 0..40 {
+            if let Some(peripheral) = find_current_peripheral(central, device_id).await? {
+                return Ok(peripheral);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+        Err(anyhow::anyhow!("Peripheral not found after scanning"))
+    }
+    .await;
+    release_scan_user(central).await?;
+    result
+}
+
 async fn execute_command(
     command: &Value,
     central: &Adapter,
@@ -110,27 +171,23 @@ async fn execute_command(
                 return Ok(Value::String("pong".into()));
             }
             "scan" => {
-                central.start_scan(ScanFilter::default()).await?;
+                acquire_scan_user(central).await?;
                 return Ok(Value::Null);
             }
             "stopScan" => {
-                central.stop_scan().await?;
+                release_scan_user(central).await?;
                 return Ok(Value::Null);
             }
             "connect" => {
                 let device_id = command["address"]
                     .as_str()
                     .ok_or_else(|| anyhow::anyhow!("No address for connect command"))?;
-                for p in central.peripherals().await? {
-                    if p.id().to_string() == device_id {
-                        start_pairing_notification_thread(p.clone());
-                        if !p.is_connected().await? {
-                            p.connect().await?;
-                        }
-                        return Ok(Value::String(p.id().to_string()));
-                    }
+                let peripheral = find_peripheral_for_connection(central, device_id).await?;
+                start_pairing_notification_thread(peripheral.clone());
+                if !peripheral.is_connected().await? {
+                    peripheral.connect().await?;
                 }
-                return Err("Peripheral not found".into());
+                return Ok(Value::String(peripheral.id().to_string()));
             }
             "disconnect" => {
                 let p = peripheral_from_command_device_string(command, central).await?;
@@ -403,14 +460,29 @@ fn mark_device_disconnected(connected_devices: &Mutex<HashSet<String>>, device_i
     connected_devices.lock().unwrap().remove(device_id)
 }
 
-fn handle_device_disconnected(connected_devices: &Mutex<HashSet<String>>, device_id: &str) {
-    if mark_device_disconnected(connected_devices, device_id) {
-        write_disconnect_event(device_id);
-    }
-
+fn cleanup_disconnected_device(device_id: &str) {
     // Allow a fresh notification thread to be started on reconnect.
     notification_threads().lock().unwrap().remove(device_id);
     close_pairings_for_peripheral(device_id);
+}
+
+fn forget_disconnected_device(connected_devices: &Mutex<HashSet<String>>, device_id: &str) -> bool {
+    let was_connected = mark_device_disconnected(connected_devices, device_id);
+    cleanup_disconnected_device(device_id);
+    was_connected
+}
+
+fn handle_all_devices_disconnected(connected_devices: &Mutex<HashSet<String>>) {
+    let device_ids = connected_devices
+        .lock()
+        .unwrap()
+        .drain()
+        .collect::<Vec<_>>();
+    for device_id in device_ids {
+        write_disconnect_event(&device_id);
+        notification_threads().lock().unwrap().remove(&device_id);
+        close_pairings_for_peripheral(&device_id);
+    }
 }
 
 async fn poll_connected_devices(
@@ -431,7 +503,11 @@ async fn poll_connected_devices(
 
         match peripheral.is_connected().await {
             Ok(true) => mark_device_connected(connected_devices, &device_id),
-            Ok(false) => handle_device_disconnected(connected_devices, &device_id),
+            Ok(false) => {
+                if forget_disconnected_device(connected_devices, &device_id) {
+                    write_disconnect_event(&device_id);
+                }
+            }
             Err(_) => {}
         }
     }
@@ -548,12 +624,9 @@ async fn peripheral_from_command_device_string(
     let device_id = command["device"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("No address for connect command"))?;
-    for p in central.peripherals().await? {
-        if p.id().to_string() == device_id {
-            return Ok(p);
-        }
-    }
-    Err(anyhow::anyhow!("Peripheral not found"))
+    find_current_peripheral(central, device_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Peripheral not found"))
 }
 
 async fn service_from_command_string(
@@ -699,6 +772,7 @@ async fn event_thread(
         tokio::select! {
             event = events.next() => {
                 let Some(event) = event else {
+                    handle_all_devices_disconnected(&connected_devices);
                     return Ok(());
                 };
 
@@ -721,10 +795,16 @@ async fn event_thread(
                         mark_device_connected(&connected_devices, &device_id);
                     }
                     CentralEvent::DeviceDisconnected(id) => {
-                        handle_device_disconnected(&connected_devices, &id.to_string());
+                        let device_id = id.to_string();
+                        forget_disconnected_device(&connected_devices, &device_id);
+                        // A platform disconnect event is authoritative even if
+                        // the matching connect event was missed during suspend.
+                        write_disconnect_event(&device_id);
                     }
-                    // nothing to do here really
-                    CentralEvent::StateUpdate(_state) => {}
+                    CentralEvent::StateUpdate(CentralState::PoweredOff) => {
+                        handle_all_devices_disconnected(&connected_devices);
+                    }
+                    CentralEvent::StateUpdate(_) => {}
                 }
             }
             _ = poll_timer.tick() => {
