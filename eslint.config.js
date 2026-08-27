@@ -17,8 +17,8 @@ export default [
                 STANDARD_GATT_CHARACTERISTICS: 'writable',
                 STANDARD_GATT_DESCRIPTORS: 'writable',
                 BluetoothUUID: 'writable',
-                    STANDARD_GATT_APPEARANCES: 'readonly',
-                    BLUETOOTH_COMPANY_IDENTIFIERS: 'readonly',
+                STANDARD_GATT_APPEARANCES: 'readonly',
+                BLUETOOTH_COMPANY_IDENTIFIERS: 'readonly',
             },
         },
         rules: {
