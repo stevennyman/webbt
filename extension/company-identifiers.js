@@ -4017,5 +4017,6 @@ const BLUETOOTH_COMPANY_IDENTIFIERS = {
     "4367": "Nylint, LLC",
     "4368": "Hamaton Inc.,",
     "4369": "RAPSODO PTE. LTD.",
-    "4370": "JustTec GmbH"
+    "4370": "JustTec GmbH",
+    "4371": "ONXMAPS, INC"
 };
