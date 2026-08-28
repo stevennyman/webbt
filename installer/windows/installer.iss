@@ -192,7 +192,7 @@ begin
   // unlikely scenario for 0.5.3
   if not IsAdminInstallMode then begin
     UninstallRegPath := 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\' + ExpandConstant('{#SetupSetting("AppId")}') + '_is1';
-    Uninstall32BitErrorUser := 'An existing administrative systemwide installation of WebBT server was found on the system. Firefox will use this new user-installed version for the current user only.';
+    Uninstall32BitErrorUser := 'An existing administrative systemwide installation of WebBT Server was found on the system. Firefox will use this new user-installed version for the current user only.';
     NeedsUserNotify := RegKeyExists(HKLM, UninstallRegPath);
     if NeedsUserNotify then begin
       SuppressibleMsgBox(Uninstall32BitErrorUser, mbInformation, MB_OK, 1)
@@ -201,8 +201,8 @@ begin
 
   // Uninstall previous 32 bit ADMIN version if installing as ADMIN
   UninstallRegPath := 'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\' + ExpandConstant('{#SetupSetting("AppId")}') + '_is1';
-  Uninstall32BitError := 'An existing 32-bit installation of WebBT server was found on the system which could not be automatically uninstalled. Please uninstall it, then try running this installer again.';
-  Uninstall32BitErrorUser := 'An existing 32-bit administrative systemwide installation of WebBT server was found on the system which could not be automatically uninstalled. Firefox will use this new user-installed version for the current user only.';
+  Uninstall32BitError := 'An existing 32-bit installation of WebBT Server was found on the system which could not be automatically uninstalled. Please uninstall it, then try running this installer again.';
+  Uninstall32BitErrorUser := 'An existing 32-bit administrative systemwide installation of WebBT Server was found on the system which could not be automatically uninstalled. Firefox will use this new user-installed version for the current user only.';
   Needs32BitUninstall := RegKeyExists(HKLM, UninstallRegPath);
   if (Needs32BitUninstall) then
     begin
@@ -234,7 +234,7 @@ begin
   // (Firefox looks for USER installations first)
   if IsAdminInstallMode then begin
     UninstallRegPath := 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\' + ExpandConstant('{#SetupSetting("AppId")}') + '_is1';
-    Uninstall32BitError := 'An existing user installation of WebBT server was found on the system which could not be automatically uninstalled. Please complete this installation as a user (non-admin), or uninstall the user installation then try running this installer again.';
+    Uninstall32BitError := 'An existing user installation of WebBT Server was found on the system which could not be automatically uninstalled. Please complete this installation as a user (non-admin), or uninstall the user installation then try running this installer again.';
     Needs32BitUninstall := RegKeyExists(HKCU, UninstallRegPath);
     if (Needs32BitUninstall) then
       begin
@@ -254,7 +254,7 @@ begin
   if NeedsVcc then begin
     Exec(ExpandConstant('{tmp}\vc_redist.exe'), '/install /passive', '', SW_SHOW, ewWaitUntilTerminated, ResultCode);
     if (ResultCode <> 0) then begin
-       Result := 'Setup detected that the latest Microsoft Visual C++ Redistributable, which is required by WebBT server, is not installed on your system. Please install the correct version for your CPU architecture, then try running this installer again. The download page has been opened.';
+       Result := 'Setup detected that the latest Microsoft Visual C++ Redistributable, which is required by WebBT Server, is not installed on your system. Please install the correct version for your CPU architecture, then try running this installer again. The download page has been opened.';
        ShellExecAsOriginalUser('', 'https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170#latest-supported-redistributable-version', '', '', SW_SHOWNORMAL, ewNoWait, ErrorCode);
        if (ErrorCode <> 0) then begin
        Result := 'Unable to open the Microsoft Visual C++ Redistributable download page. Please navigate to https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170#latest-supported-redistributable-version, install the correct version for your CPU architecture, then try running this installer again.';

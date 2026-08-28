@@ -24,7 +24,7 @@ function getChooserUI() {
 }
 
 function portMsg(message) {
-    if (message.error === 'Unsupported WebBT server version. Extension or server update required. https://github.com/stevennyman/webbt/releases/latest') {
+    if (message.error === 'Unsupported WebBT Server version. Extension or server update required. https://github.com/stevennyman/webbt/releases/latest') {
         if (chooserUI) {
             chooserUI.hide();
         }

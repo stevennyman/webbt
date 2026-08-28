@@ -113,7 +113,7 @@ async function nativeRequest(cmd, params, port) {
             if (hostPort.error && hostPort.error.message.startsWith('No such native application ')) {
                 await openOrFocusInfoTab();
                 port.postMessage({ _type: 'hideDeviceChooser' });
-                reject('WebBT server not installed. https://github.com/stevennyman/webbt/releases/latest');
+                reject('WebBT Server not installed. https://github.com/stevennyman/webbt/releases/latest');
             } else {
                 reject(e);
             }
@@ -138,12 +138,12 @@ function nativePortOnMessage(msg) {
             for (const reqId in requests) {
                 delete commandPorts[reqId];
                 const { reject, resolve } = requests[reqId];
-                reject('Unsupported WebBT server version. Extension or server update required. https://github.com/stevennyman/webbt/releases/latest');
+                reject('Unsupported WebBT Server version. Extension or server update required. https://github.com/stevennyman/webbt/releases/latest');
                 delete requests[reqId];
             }
             requests = {};
             commandPorts = {};
-            console.log('Unsupported WebBT server version. Extension or server update required. https://github.com/stevennyman/webbt/releases/latest');
+            console.log('Unsupported WebBT Server version. Extension or server update required. https://github.com/stevennyman/webbt/releases/latest');
             openOrFocusInfoTab();
         } else {
             if (WEBBT_FIRSTPARTY_SERVERS.includes(msg.serverName) &&

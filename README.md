@@ -17,13 +17,12 @@ This extension enables Web Bluetooth in Firefox on Windows, macOS, and Linux (ex
     * Linux (experimental)
         * All features generally supported; support is considered experimental because of `bluez` reliability issues with connecting to devices.
 
-> [!TIP]  
-> Experimental support for Linux and macOS is available on this branch and will be released soon.
-
 ## Installation
 
 1. Install [the WebBT Firefox extension](https://addons.mozilla.org/firefox/addon/webbt/)
-2. Run the provided [WebBT server installer](https://github.com/stevennyman/webbt/releases/latest) for your platform.
+2. Run the provided [WebBT Server installer](https://github.com/stevennyman/webbt/releases/latest) for your platform.
+
+> Note: releases are currently un-signed, which means you will receive additional security warnings when running the WebBT Server installer on Windows and macOS. On macOS, you will need to follow [additional instructions from Apple](https://support.apple.com/guide/mac-help/open-an-app-by-overriding-security-settings-mh40617/mac) in order to run the installer. For your security, always make sure you have downloaded WebBT Server from [the Releases section of this repository](https://github.com/stevennyman/webbt/releases/).
 
 That's it! Enjoy Web Bluetooth in Firefox :-)
 
