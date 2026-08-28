@@ -1,0 +1,25 @@
+name: Build Firefox unsigned XPI
+on:
+  workflow_dispatch:
+
+jobs:
+  package_xpi:
+    runs-on: ubuntu-slim
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v7
+
+      - name: Package extension directory as unsigned XPI
+        run: |
+          mkdir -p out
+          cd extension
+          zip -r ../out/WebBT-unsigned.xpi .
+
+      - name: Upload unsigned XPI
+        uses: actions/upload-artifact@v7
+        with:
+          name: WebBT-Unsigned-XPI
+          path: out/*.xpi
