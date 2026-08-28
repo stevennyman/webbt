@@ -6,3 +6,13 @@ package-lock.json
 .vs
 images
 extension/releases
+rust_server/target
+.idea
+
+# macOS Installer
+.DS_Store
+installer/.DS_Store
+installer/macos/.DS_Store
+installer/macos/build/
+installer/macos/resources/
+installer/linux/build/

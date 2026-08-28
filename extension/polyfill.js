@@ -7,11 +7,46 @@ if (!navigator.bluetooth) {
         let hostVersionErrorShown = false;
 
         const connectionSymbol = Symbol('connection');
+        const representedAttributeSymbol = Symbol('representedAttribute');
+        const gattAttributes = new Map();
 
         const outstandingRequests = {};
         const activeSubscriptions = {};
         const connectedDevices = new Set();
         let requestId = 0;
+
+        function trackGattAttribute(device, attribute) {
+            attribute[representedAttributeSymbol] = true;
+            if (!gattAttributes.has(device)) {
+                gattAttributes.set(device, new Set());
+            }
+            gattAttributes.get(device).add(attribute);
+        }
+
+        function assertGattAttributeValid(attribute) {
+            if (!attribute[representedAttributeSymbol]) {
+                throw new Error('Invalid state: GATT attribute is no longer valid');
+            }
+        }
+
+        function invalidateGattAttributes(device) {
+            const attributes = gattAttributes.get(device);
+            if (!attributes) {
+                return;
+            }
+            for (const attribute of attributes) {
+                attribute[representedAttributeSymbol] = false;
+                if (attribute[subscriptionId] !== undefined) {
+                    delete activeSubscriptions[attribute[subscriptionId]];
+                    attribute[subscriptionId] = null;
+                }
+                if (attribute[notificationsStarted] !== undefined) {
+                    attribute[notificationsStarted] = false;
+                }
+            }
+            gattAttributes.delete(device);
+        }
+
         window.addEventListener('message', event => {
             if (event.source === window && event.data && event.data.type === 'WebBluetoothPolyCSToPage') {
                 if (event.data.event === 'disconnectEvent') {
@@ -20,6 +55,7 @@ if (!navigator.bluetooth) {
                         .filter(d => d.id === device)
                         .forEach(matchingDevice => {
                             matchingDevice.gatt[connectionSymbol] = null;
+                            invalidateGattAttributes(matchingDevice);
                             matchingDevice.dispatchEvent({ type: 'gattserverdisconnected' });
                             connectedDevices.delete(matchingDevice);
                         });
@@ -125,6 +161,7 @@ if (!navigator.bluetooth) {
                 this.uuid = uuid;
                 this.properties = properties;
                 this.value = null;
+                trackGattAttribute(service.device, this);
             }
 
             get _connection() {
@@ -132,12 +169,14 @@ if (!navigator.bluetooth) {
             }
 
             async getDescriptor(bluetoothDescriptorUUID) {
+                assertGattAttributeValid(this);
                 const result = await callExtension('getDescriptor',
                     [this._connection, this.service.uuid, this.uuid, bluetoothDescriptorUUID]);
                 return new BluetoothRemoteGATTDescriptor(this, result.uuid, result.value);
             }
 
             async getDescriptors(bluetoothDescriptorUUID) {
+                assertGattAttributeValid(this);
                 const result = await callExtension('getDescriptors',
                     [this._connection, this.service.uuid, this.uuid, bluetoothDescriptorUUID]);
                 let output = [];
@@ -148,6 +187,7 @@ if (!navigator.bluetooth) {
             }
 
             async readValue() {
+                assertGattAttributeValid(this);
                 const result = await callExtension('readValue', [this._connection, this.service.uuid, this.uuid]);
                 this.value = new DataView(new Uint8Array(result).buffer);
                 this.dispatchEvent({
@@ -157,25 +197,30 @@ if (!navigator.bluetooth) {
                 return this.value;
             }
 
+            // TODO: this isn't to spec and should be corrected
             async writeValue(value) {
+                assertGattAttributeValid(this);
                 const byteValues = Array.from(new Uint8Array(value.buffer || value));
                 await callExtension('writeValue',
                     [this._connection, this.service.uuid, this.uuid, byteValues]);
             }
 
             async writeValueWithResponse(value) {
+                assertGattAttributeValid(this);
                 const byteValues = Array.from(new Uint8Array(value.buffer || value));
                 await callExtension('writeValueWithResponse',
                     [this._connection, this.service.uuid, this.uuid, byteValues]);
             }
 
             async writeValueWithoutResponse(value) {
+                assertGattAttributeValid(this);
                 const byteValues = Array.from(new Uint8Array(value.buffer || value));
                 await callExtension('writeValueWithoutResponse',
                     [this._connection, this.service.uuid, this.uuid, byteValues]);
             }
 
             async startNotifications() {
+                assertGattAttributeValid(this);
                 if (this[notificationsStarted]) {
                     // already subscribed, do nothing
                     return this;
@@ -200,6 +245,7 @@ if (!navigator.bluetooth) {
             }
 
             async stopNotifications() {
+                assertGattAttributeValid(this);
                 this[subscriptionId] = await callExtension('stopNotifications',
                     [this._connection, this.service.uuid, this.uuid]);
                 delete activeSubscriptions[this[subscriptionId]];
@@ -215,16 +261,19 @@ if (!navigator.bluetooth) {
                 this.device = device;
                 this.uuid = uuid;
                 this.isPrimary = isPrimary;
+                trackGattAttribute(device, this);
                 Object.defineProperty(this, 'device', { enumerable: false });
             }
 
             async getCharacteristic(characteristic) {
+                assertGattAttributeValid(this);
                 let { uuid, properties } = await callExtension('getCharacteristic',
                     [this.device.gatt._connection, this.uuid, characteristic]);
                 return new BluetoothRemoteGATTCharacteristic(this, uuid, properties);
             }
 
             async getCharacteristics(characteristic) {
+                assertGattAttributeValid(this);
                 let result = await callExtension('getCharacteristics',
                     [this.device.gatt._connection, this.uuid, characteristic]);
                 return result.map(({ uuid, properties }) =>
@@ -262,6 +311,7 @@ if (!navigator.bluetooth) {
 
                 callExtension('gattDisconnect', [this._connection]);
                 this[connectionSymbol] = null;
+                invalidateGattAttributes(this.device);
                 connectedDevices.delete(this.device);
                 this.device.dispatchEvent({ type: 'gattserverdisconnected' });
             }
@@ -394,9 +444,11 @@ if (!navigator.bluetooth) {
                 this.characteristic = characteristic;
                 this.uuid = uuid;
                 this.value = new DataView(new Uint8Array(value).buffer);
+                trackGattAttribute(characteristic.service.device, this);
             }
 
             async readValue() {
+                assertGattAttributeValid(this);
                 let result = await callExtension('readDescriptorValue',
                     [this.characteristic._connection, this.characteristic.service.uuid,
                         this.characteristic.uuid, this.uuid]);
@@ -405,6 +457,7 @@ if (!navigator.bluetooth) {
             }
 
             async writeValue(array) {
+                assertGattAttributeValid(this);
                 let result = await callExtension('writeDescriptorValue',
                     [this.characteristic._connection, this.characteristic.service.uuid,
                         this.characteristic.uuid, this.uuid, array]);

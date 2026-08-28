@@ -1,0 +1,33 @@
+name: Build macOS
+on:
+  workflow_dispatch:
+
+jobs:
+  Build_macOS:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v6
+
+      - name: Install Rust targets
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Compile release binaries
+        run: |
+          chmod +x rust_server/build-release-macos.sh
+          ./rust_server/build-release-macos.sh
+
+      - name: Build macOS installer package
+        run: |
+          chmod +x installer/macos/build-pkg.sh
+          ./installer/macos/build-pkg.sh
+
+      - name: Upload macOS installer package
+        uses: actions/upload-artifact@v4
+        with:
+          name: WebBT-Server-macOS-Installer
+          path: installer/macos/build/*.pkg

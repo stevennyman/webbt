@@ -6,6 +6,8 @@ const { ChromeEventTarget, loadScript } = require('./test-utils');
 const backgroundScripts = [
     loadScript('../extension/gatt-services'),
     loadScript('../extension/gatt-characteristics'),
+    loadScript('../extension/gatt-appearances'),
+    loadScript('../extension/company-identifiers'),
     loadScript('../extension/background'),
 ];
 

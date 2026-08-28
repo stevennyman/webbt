@@ -4,47 +4,49 @@ on:
 
 jobs:
     Build_Windows:
-        runs-on: windows-2025
+        runs-on: windows-latest
         
         steps:
-            - name: Add msbuild to PATH
-              uses: microsoft/setup-msbuild@v2
-
             - name: Checkout repo
               uses: actions/checkout@v6
 
-            - name: Compile release
+            - name: Install Rust targets
               run: |
-                cd BLEServer
-                msbuild BLEServer.sln /p:Configuration=Release /p:Platform=ARM64
-                msbuild BLEServer.sln /p:Configuration=Release /p:Platform=x64
-                msbuild BLEServer.sln /p:Configuration=Release /p:Platform=x86
+                rustup update stable
+                rustup default stable
+                rustup target add aarch64-pc-windows-msvc i686-pc-windows-msvc x86_64-pc-windows-msvc
+
+            - name: Compile Rust release
+              run: |
+                cd rust_server
+                cargo build --release --target aarch64-pc-windows-msvc
+                cargo build --release --target i686-pc-windows-msvc
+                cargo build --release --target x86_64-pc-windows-msvc
             
             - name: Upload ARM64 artifact
               uses: actions/upload-artifact@v4
               with:
-                name: BLEServer-ARM64
-                path: BLEServer\ARM64\Release\BLEServer.exe
+                name: BLEServer-Rust-ARM64
+                path: rust_server\target\aarch64-pc-windows-msvc\release\BLEServer.exe
             
             - name: Upload x64 artifact
               uses: actions/upload-artifact@v4
               with:
-                name: BLEServer-x64
-                path: BLEServer\x64\Release\BLEServer.exe
+                name: BLEServer-Rust-x64
+                path: rust_server\target\x86_64-pc-windows-msvc\release\BLEServer.exe
             
             - name: Upload x86 artifact
               uses: actions/upload-artifact@v4
               with:
-                name: BLEServer-x86
-                path: BLEServer\Release\BLEServer.exe
+                name: BLEServer-Rust-x86
+                path: rust_server\target\i686-pc-windows-msvc\release\BLEServer.exe
 
             - name: Compile installer
               run: |
-                cd installer
-                iscc installer.iss
+                iscc installer\windows\installer.iss
 
             - name: Upload installer
               uses: actions/upload-artifact@v4
               with:
                 name: Installer
-                path: installer\output\*
+                path: installer\windows\output\*

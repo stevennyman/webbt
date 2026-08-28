@@ -1,0 +1,37 @@
+name: Build Linux
+on:
+  workflow_dispatch:
+
+jobs:
+  Build_Linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v6
+
+      - name: Install cross-compilation toolchains
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu gcc-i686-linux-gnu
+
+      - name: Install Rust targets
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu i686-unknown-linux-gnu
+
+      - name: Compile release binaries
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_LINKER: i686-linux-gnu-gcc
+        run: ./rust_server/build-release-linux.sh
+
+      - name: Build Linux installer tarball
+        run: ./installer/linux/build-tarball.sh
+
+      - name: Upload Linux installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: WebBT-Server-Linux-Installer
+          path: installer/linux/build/*.tar.gz

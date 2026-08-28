@@ -21,6 +21,8 @@
             "gatt-services.js",
             "gatt-characteristics.js",
             "gatt-descriptors.js",
+            "gatt-appearances.js",
+            "company-identifiers.js",
             "background.js"
         ]
     },
@@ -67,7 +69,7 @@
     "options_ui": {
         "page": "options.html"
     },
-    "version": "0.5.3",
+    "version": "0.6.0",
     "manifest_version": 2,
     "browser_specific_settings": {
         "gecko": {

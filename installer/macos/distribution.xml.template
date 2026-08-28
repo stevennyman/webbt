@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+  <product id="webbt.server.macos" version="{{PRODUCT_VERSION}}"/>
+  <title>WebBT Server for Firefox</title>
+  <options customize="never" require-scripts="true" hostArchitectures="arm64,x86_64"/>
+  <domains enable_anywhere="false" enable_currentUserHome="true" enable_localSystem="true"/>
+  <script>
+    function isArm64() { return system.sysctl('hw.optional.arm64') == 1; }
+  </script>
+  <choices-outline>
+    <line choice="arm64"/>
+    <line choice="x86_64"/>
+  </choices-outline>
+  <choice id="arm64" title="WebBT Server for Firefox" visible="false" enabled="isArm64()" selected="isArm64()">
+    <pkg-ref id="webbt.server.macos.arm64"/>
+  </choice>
+  <choice id="x86_64" title="WebBT Server for Firefox" visible="false" enabled="! isArm64()" selected="! isArm64()">
+    <pkg-ref id="webbt.server.macos.x86_64"/>
+  </choice>
+  <pkg-ref id="webbt.server.macos.arm64" version="{{PRODUCT_VERSION}}">webbt-arm64.pkg</pkg-ref>
+  <pkg-ref id="webbt.server.macos.x86_64" version="{{PRODUCT_VERSION}}">webbt-x86_64.pkg</pkg-ref>
+  <allowed-os-versions>
+    <os-version min="10.15"/>
+  </allowed-os-versions>
+  <welcome file="welcome.html"/>
+  <license file="license.html"/>
+  <conclusion file="conclusion.html"/>
+</installer-gui-script>

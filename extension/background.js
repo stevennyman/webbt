@@ -1,4 +1,4 @@
-const SUPPORTED_HOST_API_VERSION = 1;
+const SUPPORTED_HOST_API_VERSIONS = [1, 2];
 
 let debugPrints = false;
 
@@ -19,11 +19,47 @@ let infoTabId = null;
 let nativeResolve = null;
 let nativeReady = null;
 
-let currentRecommendedUpdateContents = null;
+let pairingPorts = {};
 
-async function openOrFocusInfoTab() {
+let currentRecommendedUpdateContents = null;
+let currentOptionalUpdateContents = null;
+
+// upgrades will only be offered against these servers
+// a community server should provide a different serverName in its Start message)
+const WEBBT_FIRSTPARTY_SERVERS = ['bleserver-win-cppcx', 'rust-server'];
+
+const WEBBT_SERVER_UPDATES = {
+    // we're not requiring 0.5.2 server users to update to 0.5.3 but we are recommending it
+    // server API remains compatible, some users may have restrictions preventing them from installing software
+    'recommended': {
+        'version': '0.5.3',
+        'upgrade_versions': ['0.5.2'],
+        'upgrade_message': 'A recommended update for WebBT Server, version 0.5.3, is now available ' +
+            'for your system. This update improves performance and pairing reliability.',
+    },
+    // we're not requiring 0.5.2 or 0.5.3 server users to update to the rewrite but we are offering it
+    'optional': {
+        'version': '0.6.0',
+        'upgrade_versions': ['0.5.2', '0.5.3'],
+        'upgrade_message': 'An optional update for WebBT Server, version 0.6.0, is now available ' +
+            'for your system. This update is a cross-platform rewrite of WebBT Server that is compatible ' +
+            'with Windows, macOS, and Linux.',
+    },
+};
+
+// this is a flag that can be set by the server at startup as this differs by implementation
+// C++/CX uses one global scanning instance where the extension keeps count of how many instances are required
+// Note: to prevent race conditions, any logic that evaluates this variable should await nativeReady
+let serverApiVersion = 1;
+
+function removeFirst(arr, value) {
+    const i = arr.indexOf(value);
+    if (i !== -1) arr.splice(i, 1);
+}
+
+async function openOrFocusInfoTab(alwaysShow) {
     if (Date.now() - lastInfoTab < COOLDOWN_MS) return;
-    if ((await browser.storage.local.get('hideInstallation')).hideInstallation) return;
+    if (!alwaysShow && (await browser.storage.local.get('hideInstallation')).hideInstallation) return;
     lastInfoTab = Date.now();
     if (infoTabId != null) {
         try {
@@ -36,32 +72,45 @@ async function openOrFocusInfoTab() {
     }
 }
 
+browser.runtime.onInstalled.addListener((details) => {
+    if (details.reason == 'update' && (details.previousVersion == '0.5.2' || details.previousVersion == '0.5.3')) {
+        openOrFocusInfoTab(true);
+    }
+});
+
 
 async function nativeRequest(cmd, params, port) {
     return new Promise(async (resolve, reject) => {
-        requests[requestId] = { resolve, reject };
-        commandPorts[requestId] = port;
+        const currentRequestId = requestId++;
+        requests[currentRequestId] = { resolve, reject };
+        commandPorts[currentRequestId] = port;
         const msg = Object.assign(params || {}, {
             cmd,
-            _id: requestId++,
+            _id: currentRequestId,
         });
         if (cmd != 'ping') {
             await nativeReady;
-            if (debugPrints) {
-                console.log('nativeReady complete');
-            }
         }
         if (debugPrints) {
             console.log('Sent native message:', msg);
         }
+        const hostPort = nativePort;
+        if (!hostPort) {
+            delete requests[currentRequestId];
+            delete commandPorts[currentRequestId];
+            reject('WebBT native host is not connected');
+            return;
+        }
         try {
-            nativePort.postMessage(msg);
+            hostPort.postMessage(msg);
         } catch (e) {
             if (debugPrints) {
                 console.log(e);
             }
             nativeResolve();
-            if (nativePort.error && nativePort.error.message.startsWith('No such native application ')) {
+            delete requests[currentRequestId];
+            delete commandPorts[currentRequestId];
+            if (hostPort.error && hostPort.error.message.startsWith('No such native application ')) {
                 await openOrFocusInfoTab();
                 port.postMessage({ _type: 'hideDeviceChooser' });
                 reject('WebBT server not installed. https://github.com/stevennyman/webbt/releases/latest');
@@ -76,12 +125,15 @@ const subscriptions = {};
 const devices = {};
 
 function nativePortOnMessage(msg) {
+    if (msg._type === 'Start' && 'apiVersion' in msg) {
+        serverApiVersion = msg.apiVersion;
+    }
     nativeResolve();
-    if (debugPrints) {
+    if (debugPrints && msg._type != 'scanResult') {
         console.log('Received native message:', msg);
     }
     if (msg._type === 'Start') {
-        if (msg.apiVersion != SUPPORTED_HOST_API_VERSION) {
+        if (!SUPPORTED_HOST_API_VERSIONS.includes(msg.apiVersion)) {
             nativePort.disconnect();
             for (const reqId in requests) {
                 delete commandPorts[reqId];
@@ -93,22 +145,62 @@ function nativePortOnMessage(msg) {
             commandPorts = {};
             console.log('Unsupported WebBT server version. Extension or server update required. https://github.com/stevennyman/webbt/releases/latest');
             openOrFocusInfoTab();
-        } else if (msg.serverName == 'bleserver-win-cppcx' && msg.serverVersion == '0.5.2') {
-            // we're not requiring 0.5.2 server users to update but we are recommending it
-            // server API remains compatible, some users may have restrictions preventing them from installing software
-            currentRecommendedUpdateContents = { _type: 'recommendedUpdate', message: 'A recommended update for WebBT Server, version 0.5.3, is now available for your system. This update improves performance and pairing reliability.', consoleMessage: 'A recommended update for WebBT Server, version 0.5.3, is now available for your system. This update improves performance and pairing reliability. https://github.com/stevennyman/webbt/releases/latest' };
-            for (const reqId in requests) {
-                commandPorts[reqId].postMessage({ currentRecommendedUpdateContents: currentRecommendedUpdateContents });
-            }
         } else {
-            currentRecommendedUpdateContents = null;
-            for (const reqId in requests) {
-                commandPorts[reqId].postMessage({ currentRecommendedUpdateContents: null });
+            if (WEBBT_FIRSTPARTY_SERVERS.includes(msg.serverName) &&
+            WEBBT_SERVER_UPDATES.recommended.upgrade_versions.includes(msg.serverVersion)) {
+                currentRecommendedUpdateContents = { _type: 'recommendedUpdate', message: WEBBT_SERVER_UPDATES.recommended.upgrade_message, consoleMessage: WEBBT_SERVER_UPDATES.recommended.upgrade_message + ' https://github.com/stevennyman/webbt/releases/latest' };
+                for (const reqId in requests) {
+                    commandPorts[reqId].postMessage({
+                        currentRecommendedUpdateContents: currentRecommendedUpdateContents,
+                    });
+                }
+            } else {
+                currentRecommendedUpdateContents = null;
+                for (const reqId in requests) {
+                    commandPorts[reqId].postMessage({ currentRecommendedUpdateContents: null });
+                }
+            }
+
+            if (WEBBT_FIRSTPARTY_SERVERS.includes(msg.serverName) &&
+            WEBBT_SERVER_UPDATES.optional.upgrade_versions.includes(msg.serverVersion)) {
+                currentOptionalUpdateContents = { _type: 'optionalUpdate', message: WEBBT_SERVER_UPDATES.optional.upgrade_message, consoleMessage: WEBBT_SERVER_UPDATES.optional.upgrade_message + ' https://github.com/stevennyman/webbt/releases/latest' };
+                for (const reqId in requests) {
+                    commandPorts[reqId].postMessage({
+                        currentOptionalUpdateContents: currentOptionalUpdateContents,
+                    });
+                }
+            } else {
+                currentOptionalUpdateContents = null;
+                for (const reqId in requests) {
+                    commandPorts[reqId].postMessage({ currentOptionalUpdateContents: null });
+                }
             }
         }
     }
-    if (msg.pairingType && commandPorts[msg._id]) {
-        commandPorts[msg._id].postMessage(msg);
+    // should be compatible with API v1 and v2 though less customized to API v1 than before
+    if (msg.pairingType) {
+        if (serverApiVersion == 1) {
+            commandPorts[msg._id].postMessage({ ...msg, pairingId: msg._id });
+        } else {
+            // Server API v2+
+            for (const portIt of Object.values(commandPorts)) {
+                try {
+                    portIt.postMessage(msg);
+                    (pairingPorts[msg.pairingId] ??= new Set()).add(portIt);
+                } catch (error) {}
+            }
+        }
+    }
+
+    // not emitted on Server API v1
+    if (msg._type === 'pairing_hideDialog') {
+        const pairingPortList = pairingPorts[msg.pairingId] ?? new Set();
+        for (const portIt of pairingPortList) {
+            try {
+                portIt.postMessage(msg);
+            } catch (error) {}
+        }
+        delete pairingPorts[msg.pairingId];
     }
     if (msg._type === 'response' && requests[msg._id]) {
         delete commandPorts[msg._id];
@@ -131,13 +223,39 @@ function nativePortOnMessage(msg) {
     if (msg._type === 'disconnectEvent') {
         const gattId = msg.device;
         const device = devices[gattId];
+        const devicePorts = device ? [...device] : [];
+
+        // The page may reconnect synchronously from gattserverdisconnected.
+        // Clean up the old connection first so that a reconnect reusing the
+        // same legacy C++ server GATT ID is not removed by this cleanup.
+        delete characteristicCache[gattId];
+        delete devices[gattId];
+        // Purge stale subscriptions so re-subscribe sends fresh CCCD writes
+        for (const key of Object.keys(subscriptions)) {
+            if (key.startsWith('subscription_' + gattId + '_')) {
+                delete subscriptions[key];
+            }
+        }
+        for (const origin of Object.keys(subscriptionOrigins)) {
+            subscriptionOrigins[origin] = subscriptionOrigins[origin].filter(
+                ([subscriptionGattId]) => subscriptionGattId !== gattId,
+            );
+            if (!subscriptionOrigins[origin].length) {
+                delete subscriptionOrigins[origin];
+            }
+        }
         if (device) {
-            device.forEach(async port => {
-                port.postMessage({ event: 'disconnectEvent', device: (await gattIdToWebId(gattId, port)) });
-                portsObjects.get(port).devices.delete(gattId);
+            devicePorts.forEach(async port => {
+                try {
+                    const webId = await gattIdToWebId(gattId, port);
+                    if (webId !== null) {
+                        port.postMessage({ event: 'disconnectEvent', device: webId });
+                    }
+                    portsObjects.get(port)?.devices.delete(gattId);
+                } catch (error) {
+                    console.error('Unable to forward disconnect event:', error);
+                }
             });
-            delete characteristicCache[gattId];
-            delete devices[gattId];
         }
     }
 }
@@ -148,8 +266,57 @@ const portsObjects = new Map();
 const subscriptionOrigins = {};
 const characteristicCache = {};
 
+function trackOriginSubscription(origin, gattId, service, characteristic, port) {
+    const list = (subscriptionOrigins[origin] ??= []);
+    const exists = list.some(
+        ([id, svc, char, prt]) => id === gattId && svc === service && char === characteristic && prt === port,
+    );
+    if (!exists) {
+        list.push([gattId, service, characteristic, port]);
+    }
+}
+
+function untrackOriginSubscription(origin, gattId, service, characteristic, port) {
+    const list = subscriptionOrigins[origin];
+    if (!list) {
+        return;
+    }
+    const index = list.findIndex(
+        ([id, svc, char, prt]) => id === gattId && svc === service && char === characteristic && prt === port,
+    );
+    if (index > -1) {
+        list.splice(index, 1);
+    }
+    if (!list.length) {
+        delete subscriptionOrigins[origin];
+    }
+}
+
+function removePortFromSubscriptionOrigins(port) {
+    const origin = port.sender.origin;
+    const list = subscriptionOrigins[origin];
+    if (!list) {
+        return;
+    }
+    subscriptionOrigins[origin] = list.filter(([, , , prt]) => prt !== port);
+    if (!subscriptionOrigins[origin].length) {
+        delete subscriptionOrigins[origin];
+    }
+}
+
 function nativePortOnDisconnect(port) {
     nativeResolve();
+    if (nativePort !== port) {
+        return;
+    }
+
+    for (const reqId in requests) {
+        requests[reqId].reject(port.error?.message || 'WebBT native host disconnected');
+        delete commandPorts[reqId];
+    }
+    requests = {};
+    commandPorts = {};
+    nativePort = null;
     console.log('Disconnected!', port.error);
 }
 
@@ -182,20 +349,44 @@ function normalizeServiceUuid(uuid) {
     return normalizeUuid(uuid, STANDARD_GATT_SERVICES);
 }
 
+function addResolvedAdvertisementMetadata(msg) {
+    if (msg.appearance !== null && msg.appearance !== undefined) {
+        const appearanceName = STANDARD_GATT_APPEARANCES[msg.appearance];
+        if (appearanceName && msg.appearance !== 0) {
+            msg.appearanceName = appearanceName;
+        }
+    }
+    const manufacturerNames = (msg.manufacturerData ?? [])
+        .map(entry => BLUETOOTH_COMPANY_IDENTIFIERS[entry.companyIdentifier])
+        .filter(Boolean);
+    if (manufacturerNames.length) {
+        msg.manufacturerNames = [...new Set(manufacturerNames)];
+    }
+}
+
 function normalizeCharacteristicUuid(uuid) {
     return normalizeUuid(uuid, STANDARD_GATT_CHARACTERISTICS);
 }
 
 function windowsServiceUuid(uuid) {
+    if (serverApiVersion === 2) {
+        return normalizeUuid(uuid, STANDARD_GATT_SERVICES);
+    }
     return '{' + normalizeUuid(uuid, STANDARD_GATT_SERVICES) + '}';
 }
 
 function windowsCharacteristicUuid(uuid) {
+    if (serverApiVersion === 2) {
+        return normalizeUuid(uuid, STANDARD_GATT_CHARACTERISTICS);
+    }
     return '{' + normalizeUuid(uuid, STANDARD_GATT_CHARACTERISTICS) + '}';
 }
 
 function windowsDescriptorUuid(uuid) {
     if (uuid) {
+        if (serverApiVersion === 2) {
+            return normalizeUuid(uuid, STANDARD_GATT_DESCRIPTORS);
+        }
         return '{' + normalizeUuid(uuid, STANDARD_GATT_DESCRIPTORS) + '}';
     } else {
         return uuid;
@@ -203,19 +394,23 @@ function windowsDescriptorUuid(uuid) {
 }
 
 let scanningCounter = 0;
-async function startScanning(port) {
+async function startScanning(port, name) {
+    await nativeReady;
     if (!scanningCounter) {
-        await nativeRequest('scan', {}, port);
+        await nativeRequest('scan', { name: name }, port);
     }
     portsObjects.get(port).scanCount++;
+    portsObjects.get(port).scanNames.push(name);
     scanningCounter++;
 }
 
-function stopScanning(port) {
+async function stopScanning(port, name) {
+    await nativeReady;
     scanningCounter--;
     portsObjects.get(port).scanCount--;
+    removeFirst(portsObjects.get(port).scanNames, name);
     if (!scanningCounter && nativePort && !(nativePort.error)) {
-        nativeRequest('stopScan', {}, port);
+        await nativeRequest('stopScan', {}, port);
     }
 }
 
@@ -246,6 +441,20 @@ function processPrefixMask(elem, elemInner) {
     return true;
 }
 
+function canonicalizeFilterBytes(value, name) {
+    let bytes;
+    if (Array.isArray(value)) {
+        bytes = new Uint8Array(value);
+    } else if (value instanceof ArrayBuffer) {
+        bytes = new Uint8Array(value);
+    } else if (ArrayBuffer.isView(value)) {
+        bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    } else {
+        throw new TypeError(`${name} must be a BufferSource`);
+    }
+    return bytes;
+}
+
 function matchDeviceFilter(filter, device) {
     if (filter.services) {
         const deviceServices = device.serviceUuids.map(normalizeServiceUuid);
@@ -261,41 +470,20 @@ function matchDeviceFilter(filter, device) {
     }
 
     if (filter.manufacturerData) {
-        let companyIdentifierFlag = false;
-        for (const elem of device.manufacturerData) {
-            for (const elemInner of filter.manufacturerData) {
-                if (!elemInner.companyIdentifier) {
-                    throw new Error('manufacturerData is missing required companyIdentifier');
-                }
-                if (elem.companyIdentifier == elemInner.companyIdentifier) {
-                    companyIdentifierFlag = true;
-                    if (processPrefixMask(elem, elemInner) === false) {
-                        return false;
-                    }
-                }
-            }
-        }
-        if (!companyIdentifierFlag) {
+        const companyIdentifierMatch = filter.manufacturerData.every(elemInner =>
+            device.manufacturerData.some(elem =>
+                elem.companyIdentifier == elemInner.companyIdentifier && processPrefixMask(elem, elemInner)));
+        if (!companyIdentifierMatch) {
             return false;
         }
     }
 
     if (filter.serviceData) {
-        let serviceFlag = false;
-        for (const elem of device.serviceData) {
-            for (const elemInner of filter.serviceData) {
-                if (!elemInner.service) {
-                    throw new Error('serviceData is missing required service');
-                }
-                if (normalizeServiceUuid(elem.service) == normalizeServiceUuid(elemInner.service)) {
-                    serviceFlag = true;
-                    if (processPrefixMask(elem, elemInner) === false) {
-                        return false;
-                    }
-                }
-            }
-        }
-        if (!serviceFlag) {
+        const serviceDataMatch = filter.serviceData.every(elemInner =>
+            device.serviceData.some(elem =>
+                normalizeServiceUuid(elem.service) === normalizeServiceUuid(elemInner.service) &&
+                processPrefixMask(elem, elemInner)));
+        if (!serviceDataMatch) {
             return false;
         }
     }
@@ -304,6 +492,7 @@ function matchDeviceFilter(filter, device) {
 
 const webIdToGattIdMap = {};
 const webIdToAddressMap = {};
+const gattIdToWebIdMap = {};
 
 // caching function for webId to gattId conversions since browser storage access can be a bit slow
 async function webIdToGattId(webId, port = null, origin = null) {
@@ -359,49 +548,99 @@ async function webIdToAddress(webId, port = null, origin = null) {
     }
 }
 
-// TODO: this function (infrequently used) does not cache values and may be slow
 async function gattIdToWebId(gattId, port = null, origin = null) {
     if (origin === null) {
         origin = port.sender.origin;
     }
-    const storageKey = 'originDevices_'+origin;
-    if (!(origin in webIdToAddressMap)) {
-        webIdToAddressMap[origin] = {};
+    if (!(origin in gattIdToWebIdMap)) {
+        gattIdToWebIdMap[origin] = {};
     }
-
+    if (gattId in gattIdToWebIdMap[origin]) {
+        return gattIdToWebIdMap[origin][gattId];
+    }
+    const storageKey = 'originDevices_'+origin;
     const currentOriginDevices = (await browser.storage.local.get({ [storageKey]: [] }))[storageKey];
-    let compl = false;
     for (const dev of currentOriginDevices) {
         if (dev.gattId === gattId) {
-            compl = true;
-            // webIdToAddressMap[origin][webId] = dev.address;
+            gattIdToWebIdMap[origin][gattId] = dev.webId;
             return dev.webId;
         }
     }
-    if (!compl) {
-        return null;
-    }
+    return null;
 }
 
 async function requestDevice(port, options) {
     if ((!options.filters && !options.acceptAllDevices) || (options.filters && options.acceptAllDevices)) {
-        // TODO better filters validation, proper error message
-        // Most validation is implemented except for empty list checks
         throw new Error('One of filters or acceptAllDevices must be provided');
+    }
+    if (options.filters && (!Array.isArray(options.filters) || !options.filters.length)) {
+        throw new Error('filters must be a non-empty array');
     }
     if (options.exclusionFilters && ! options.filters) {
         throw new Error('exclusionFilters requires filters');
     }
-    if (options.filters) {
-        if (options.filters.manufacturerData) {
-            for (const elem of options.filters.manufacturerData) {
-                if (!elem.companyIdentifier) {
-                    throw new Error('manufacturerData is missing required companyIdentifier');
+
+    for (const filter of [...(options.filters ?? []), ...(options.exclusionFilters ?? [])]) {
+        if (!filter || typeof filter !== 'object') {
+            throw new Error('Device filters must be objects');
+        }
+        if (filter.services && (!Array.isArray(filter.services) || !filter.services.length)) {
+            throw new Error('services must be a non-empty array');
+        }
+        if (filter.manufacturerData &&
+            (!Array.isArray(filter.manufacturerData) || !filter.manufacturerData.length)) {
+            throw new Error('manufacturerData must be a non-empty array');
+        }
+        if (filter.serviceData &&
+            (!Array.isArray(filter.serviceData) || !filter.serviceData.length)) {
+            throw new Error('serviceData must be a non-empty array');
+        }
+        if (!filter.services && !filter.name && !filter.namePrefix &&
+            !filter.manufacturerData && !filter.serviceData) {
+            throw new Error('Each filter must specify a service, name, namePrefix, manufacturerData, or serviceData');
+        }
+        if (filter.manufacturerData) {
+            const companyIdentifiers = new Set();
+            for (const elem of filter.manufacturerData) {
+                if (!elem || typeof elem !== 'object') {
+                    throw new TypeError('manufacturerData entries must be objects');
+                }
+                if (elem.companyIdentifier === undefined || elem.companyIdentifier === null) {
+                    throw new TypeError('manufacturerData is missing required companyIdentifier');
+                }
+                const companyIdentifier = Number(elem.companyIdentifier);
+                if (!Number.isInteger(companyIdentifier) || companyIdentifier < 0 || companyIdentifier > 0xffff) {
+                    throw new TypeError('companyIdentifier must be an unsigned short');
+                }
+                if (companyIdentifiers.has(companyIdentifier)) {
+                    throw new TypeError('manufacturerData must not contain duplicate companyIdentifier values');
+                }
+                companyIdentifiers.add(companyIdentifier);
+                elem.companyIdentifier = companyIdentifier;
+                if (elem.dataPrefix !== undefined) {
+                    const dataPrefix = canonicalizeFilterBytes(elem.dataPrefix, 'dataPrefix');
+                    if (!dataPrefix.length) {
+                        throw new TypeError('dataPrefix must not be empty');
+                    }
+                    elem.dataPrefix = dataPrefix;
+                    if (elem.mask !== undefined) {
+                        const mask = canonicalizeFilterBytes(elem.mask, 'mask');
+                        if (mask.length !== dataPrefix.length) {
+                            throw new TypeError('mask length must equal dataPrefix length');
+                        }
+                        elem.mask = mask;
+                    }
+                } else if (elem.mask !== undefined) {
+                    const mask = canonicalizeFilterBytes(elem.mask, 'mask');
+                    if (mask.length !== 0) {
+                        throw new TypeError('mask length must equal dataPrefix length');
+                    }
+                    elem.mask = mask;
                 }
             }
         }
-        if (options.filters.serviceData) {
-            for (const elem of options.filters.serviceData) {
+        if (filter.serviceData) {
+            for (const elem of filter.serviceData) {
                 if (!elem.service) {
                     throw new Error('serviceData is missing required service');
                 }
@@ -411,8 +650,9 @@ async function requestDevice(port, options) {
 
     let deviceNames = {};
     let deviceRssi = {};
+    const SCAN_NAME = 'requestDevice_'+port.sender.contextId;
     function scanResultListener(msg) {
-        if (msg._type === 'scanResult') {
+        if (msg._type === 'scanResult' && (!msg.scanName || msg.scanName == SCAN_NAME)) {
             if (msg.localName) {
                 deviceNames[msg.bluetoothAddress] = msg.localName;
             } else {
@@ -421,6 +661,7 @@ async function requestDevice(port, options) {
             for (let i = 0; i < msg.serviceData.length; i++) {
                 msg.serviceData[i].service = normalizeServiceUuid(msg.serviceData[i].service);
             }
+            addResolvedAdvertisementMetadata(msg);
             deviceRssi[msg.bluetoothAddress] = msg.rssi;
             if (options.acceptAllDevices ||
                 options.filters.some(filter => matchDeviceFilter(filter, msg))) {
@@ -436,12 +677,14 @@ async function requestDevice(port, options) {
     nativePort.onMessage.addListener(scanResultListener);
     port.postMessage({
         _type: 'showDeviceChooser', currentRecommendedUpdateContents: currentRecommendedUpdateContents,
+        currentOptionalUpdateContents: currentOptionalUpdateContents,
     });
     try {
-        await startScanning(port);
+        await startScanning(port, SCAN_NAME);
     } catch (error) {
-        if (error == 'The device is not ready for use.\r\n\r\nThe device is not ready for use.\r\n') {
-            port.postMessage({ _type: 'deviceChooserWinError' });
+        if (error == 'The device is not ready for use.\r\n\r\nThe device is not ready for use.\r\n'
+            || error == 'No Bluetooth adapter available or Bluetooth is turned off in your system settings.') {
+            port.postMessage({ _type: 'deviceChooserBluetoothError' });
         }
         throw error;
     }
@@ -481,6 +724,7 @@ async function requestDevice(port, options) {
             if (currentOriginDevices[i].address === deviceAddress) {
                 currentWebId = currentOriginDevices[i].webId;
                 alreadyInStorage = true;
+                currentOriginDevices[i].gattId = gattId;
                 if (!(currentOriginDevices[i].name === deviceNames[deviceAddress])) {
                     // hopefully this doesn't cause valuable names to be lost
                     currentOriginDevices[i].name = deviceNames[deviceAddress];
@@ -501,6 +745,9 @@ async function requestDevice(port, options) {
                 address: deviceAddress, name: deviceNames[deviceAddress], gattId: gattId, webId: currentWebId,
             });
         }
+        if (gattId) {
+            (gattIdToWebIdMap[port.sender.origin] ??= {})[gattId] = currentWebId;
+        }
         await browser.storage.local.set({ [storageKey]: currentOriginDevices });
 
         return {
@@ -509,7 +756,7 @@ async function requestDevice(port, options) {
             name: deviceNames[deviceAddress],
         };
     } finally {
-        stopScanning(port);
+        await stopScanning(port, SCAN_NAME);
         nativePort.onMessage.removeListener(scanResultListener);
     }
 }
@@ -535,20 +782,24 @@ async function watchAdvertisements(port, webId) {
         return { exception: 'UnknownError' };
     }
 
-    if ('dev_'+port+gattId in listenercnts) {
-        listenercnts['dev_'+port.sender.contextId+gattId]++;
-        return;
-    } else {
-        listenercnts['dev_'+port.sender.contextId+gattId] = 1;
+    if (!await nativeRequest('availability', {}, port)) {
+        return { exception: 'InvalidStateError' };
     }
 
-    // TODO: throw InvalidStateError if Bluetooth off
+    const listenerKey = 'dev_'+port.sender.contextId+gattId;
+    if (listenerKey in listenercnts) {
+        listenercnts[listenerKey]++;
+        return;
+    } else {
+        listenercnts[listenerKey] = 1;
+    }
 
     portsObjects.get(port).knownDeviceIds.add(address);
     portsObjects.get(port).knownGattIds.add(gattId);
 
     function scanResultListener(msg) {
-        msg = structuredClone(msg); // todo: is this necessary?
+        // Do not mutate the native message before other listeners receive it.
+        msg = structuredClone(msg);
         if (msg._type === 'scanResult') {
             msg._type = 'adScanResult';
             msg.subscriptionId = 'scanRequest_'+webId;
@@ -572,9 +823,10 @@ async function watchAdvertisements(port, webId) {
     listeners['dev_'+port.sender.contextId+gattId] = scanResultListener;
     nativePort.onMessage.addListener(scanResultListener);
 
-    await startScanning(port);
+    await startScanning(port, 'dev_'+port.sender.contextId+gattId);
 
-    return { currentRecommendedUpdateContents: currentRecommendedUpdateContents };
+    return { currentRecommendedUpdateContents: currentRecommendedUpdateContents,
+        currentOptionalUpdateContents: currentOptionalUpdateContents };
 }
 
 async function stopAdvertisements(port, webId, stopAll = false) {
@@ -588,7 +840,7 @@ async function stopAdvertisements(port, webId, stopAll = false) {
             nativePort.onMessage.removeListener(listeners['dev_'+port.sender.contextId+gattId]);
             delete listeners['dev_'+port.sender.contextId+gattId];
             delete listenercnts['dev_'+port.sender.contextId+gattId];
-            await stopScanning(port);
+            await stopScanning(port, 'dev_'+port.sender.contextId+gattId);
         }
     }
 }
@@ -601,7 +853,11 @@ async function gattConnect(port, webId) {
         throw new Error('Unknown device address');
     }
 
-    const gattId = await nativeRequest('connect', { address: address.replace(/:/g, '') }, port);
+    const storedGattId = await webIdToGattId(webId, port);
+    const connectId = serverApiVersion === 2 && typeof storedGattId === 'string'
+        ? storedGattId
+        : address.replace(/:/g, '');
+    const gattId = await nativeRequest('connect', { address: connectId }, port);
     if (gattId != null) {
         if (!(port.sender.origin in webIdToGattIdMap)) {
             webIdToGattIdMap[port.sender.origin] = {};
@@ -632,6 +888,7 @@ async function gattConnect(port, webId) {
         currentOriginDevices.push({
             address: address, name: portsObjects.get(port).deviceIdNames[address], gattId: gattId,
         });
+        needUpdate = true;
     }
     if (needUpdate) {
         await browser.storage.local.set({ [storageKey]: currentOriginDevices });
@@ -754,6 +1011,16 @@ async function writeValueWithoutResponse(port, webId, service, characteristic, v
 
 async function startNotifications(port, webId, service, characteristic) {
     let gattId = await webIdToGattId(webId, port);
+    // Rust (API v2) server must return subscriptionNames in this format
+    const subscriptionName =
+        'subscription_'+gattId+'_'+windowsServiceUuid(service)+'_'+
+        windowsCharacteristicUuid(characteristic);
+    // already notifying for this port
+    if (subscriptions[subscriptionName] && subscriptions[subscriptionName].size && serverApiVersion === 2) {
+        subscriptions[subscriptionName].add(port);
+        trackOriginSubscription(port.sender.origin, gattId, service, characteristic, port);
+        return subscriptionName;
+    }
     const subscriptionId = await nativeRequest('subscribe', {
         device: gattId,
         service: windowsServiceUuid(service),
@@ -764,15 +1031,30 @@ async function startNotifications(port, webId, service, characteristic) {
         subscriptions[subscriptionId] = new Set();
     }
     subscriptions[subscriptionId].add(port);
-
-    ((subscriptionOrigins[port.sender.origin] ??= {})[gattId] ??= []).push([service, characteristic, port]);
-    portsObjects.get(port).subscriptions.add(subscriptionId);
+    trackOriginSubscription(port.sender.origin, gattId, service, characteristic, port);
     return subscriptionId;
 }
 
 async function stopNotifications(port, webId, service, characteristic) {
     let gattId = await webIdToGattId(webId, port);
     let subscriptionId;
+    const subscriptionName =
+        'subscription_'+gattId+'_'+windowsServiceUuid(service)+'_'+
+        windowsCharacteristicUuid(characteristic);
+    const originSubscriptions = subscriptionOrigins[port.sender.origin] ?? [];
+    const trackedSubscription = originSubscriptions.some(
+        ([subscriptionGattId, subscriptionService, subscriptionCharacteristic, subscriptionPort]) =>
+            subscriptionGattId === gattId && subscriptionService === service &&
+            subscriptionCharacteristic === characteristic && subscriptionPort === port,
+    );
+    if (!trackedSubscription) {
+        return serverApiVersion === 2 ? subscriptionName : undefined;
+    }
+    if (subscriptions[subscriptionName] && subscriptions[subscriptionName].size > 1 && serverApiVersion === 2) {
+        subscriptions[subscriptionName].delete(port);
+        untrackOriginSubscription(port.sender.origin, gattId, service, characteristic, port);
+        return subscriptionName;
+    }
     if (nativePort && !(nativePort.error)) {
         subscriptionId = await nativeRequest('unsubscribe', {
             device: gattId,
@@ -781,31 +1063,22 @@ async function stopNotifications(port, webId, service, characteristic) {
         }, port);
     }
 
-    subscriptions[subscriptionId].delete(port);
-    if (!subscriptions[subscriptionId].size) {
+    if (subscriptionId && subscriptions[subscriptionId]) {
+        subscriptions[subscriptionId].delete(port);
+    }
+    if (serverApiVersion === 2) {
+        delete subscriptions[subscriptionName];
+    } else if (subscriptionId && subscriptions[subscriptionId] && !subscriptions[subscriptionId].size) {
         delete subscriptions[subscriptionId];
     }
 
-    // remove subscriptionOrigins entry and clean up empty keys if needed
-    const originSubscriptions = subscriptionOrigins[port.sender.origin][gattId];
-    const index = originSubscriptions.findIndex(
-        ([svc, char, prt]) => svc === service && char === characteristic && prt === port,
-    );
-    if (index > -1) originSubscriptions.splice(index, 1);
-    if (!originSubscriptions.length) delete subscriptionOrigins[port.sender.origin][gattId];
-    if (!Object.keys(subscriptionOrigins[port.sender.origin]).length) delete subscriptionOrigins[port.sender.origin];
+    untrackOriginSubscription(port.sender.origin, gattId, service, characteristic, port);
 
-    portsObjects.get(port).subscriptions.delete(subscriptionId);
     return subscriptionId;
 }
 
 async function accept(port, _id) {
     return await nativeRequest('accept', { origId: _id }, port);
-}
-
-async function acceptPasswordCredential(port, _id, username, password) {
-    return await nativeRequest('acceptPasswordCredential',
-        { origId: _id, username: username, password: password }, port);
 }
 
 async function acceptPin(port, _id, pin) {
@@ -893,6 +1166,10 @@ async function getOriginDevices(port) {
 async function forgetDevice(port, webId, origin = null) {
     const desiredOrigin = (origin ?? port.sender.origin);
     let address = await webIdToAddress(webId, null, desiredOrigin);
+    const gattId = await webIdToGattId(webId, null, desiredOrigin);
+    if (address === null) {
+        return;
+    }
     const storageKey = 'originDevices_'+desiredOrigin;
     const currentOriginDevices = (await browser.storage.local.get({ [storageKey]: [] }))[storageKey];
     for (let i = 0; i < currentOriginDevices.length; i++) {
@@ -910,8 +1187,7 @@ async function forgetDevice(port, webId, origin = null) {
             // gattDisconnect removes from devices and disconnects
             await gattDisconnect(portObj[0], webId);
             portObj[1].knownDeviceIds.delete(address);
-
-            // TODO check this
+            portObj[1].knownGattIds.delete(gattId);
             const devIdNames = portObj[1].deviceIdNames;
             delete devIdNames[address];
         }
@@ -919,12 +1195,9 @@ async function forgetDevice(port, webId, origin = null) {
 
     // also remove from subscriptions
     if (desiredOrigin in subscriptionOrigins) {
-        for (const possibleAddress of Object.keys(subscriptionOrigins[desiredOrigin])) {
-            if (possibleAddress.endsWith(address)) {
-                const subList = subscriptionOrigins[desiredOrigin][possibleAddress];
-                for (const elem of subList) {
-                    await stopNotifications(elem[2], webId, elem[0], elem[1]);
-                }
+        for (const [subscriptionGattId, service, characteristic, subPort] of [...subscriptionOrigins[desiredOrigin]]) {
+            if (subscriptionGattId === gattId) {
+                await stopNotifications(subPort, webId, service, characteristic);
             }
         }
     }
@@ -932,22 +1205,15 @@ async function forgetDevice(port, webId, origin = null) {
     // also stop advertisements
     await stopAdvertisements(port, webId, true);
 
-    // TODO refactor connection to primarily use gatt IDs?
-
     if (desiredOrigin in webIdToGattIdMap) {
-        for (const possibleAddress of Object.entries(webIdToGattIdMap[desiredOrigin])) {
-            if (possibleAddress[1].endsWith(address)) {
-                delete webIdToGattIdMap[desiredOrigin][possibleAddress[0]];
-            }
-        }
+        delete webIdToGattIdMap[desiredOrigin][webId];
     }
 
     if (desiredOrigin in webIdToAddressMap) {
-        for (const possibleAddress of Object.entries(webIdToAddressMap[desiredOrigin])) {
-            if (possibleAddress[1] == address) {
-                delete webIdToAddressMap[desiredOrigin][possibleAddress[0]];
-            }
-        }
+        delete webIdToAddressMap[desiredOrigin][webId];
+    }
+    if (desiredOrigin in gattIdToWebIdMap && gattId !== null) {
+        delete gattIdToWebIdMap[desiredOrigin][gattId];
     }
 
     if (currentOriginDevices.length === 0) {
@@ -976,7 +1242,6 @@ const exportedMethods = {
     startNotifications,
     stopNotifications,
     accept,
-    acceptPasswordCredential,
     acceptPin,
     cancel,
     availability,
@@ -994,8 +1259,9 @@ const exportedMethods = {
 chrome.runtime.onConnect.addListener((port) => {
     portsObjects.set(port, {
         scanCount: 0,
+        scanNames: [],
         devices: new Set(),
-        subscriptions: new Set(),
+        // subscriptions: new Set(),
         knownDeviceIds: new Set(),
         knownGattIds: new Set(),
         deviceIdNames: new Map(),
@@ -1019,21 +1285,33 @@ chrome.runtime.onConnect.addListener((port) => {
         });
     }
 
-    port.onDisconnect.addListener(() => {
-        for (let gattDevice of portsObjects.get(port).devices.values()) {
-            gattDisconnect(port, gattDevice);
+    port.onDisconnect.addListener(async () => {
+        const portState = portsObjects.get(port);
+        if (!portState) {
+            return;
         }
-        while (portsObjects.get(port).scanCount > 0) {
-            stopScanning(port);
+
+        const disconnects = [...portState.devices]
+            .map(gattId => gattDisconnect(port, null, gattId));
+        await Promise.allSettled(disconnects);
+        while (portState.scanCount > 0) {
+            await stopScanning(port, portState.scanNames.pop());
         }
         for (const value of Object.values(subscriptions)) {
             value.delete(port);
+        }
+        removePortFromSubscriptionOrigins(port);
+        for (const pairingId of Object.keys(pairingPorts)) {
+            pairingPorts[pairingId].delete(port);
+            if (!pairingPorts[pairingId].size) {
+                delete pairingPorts[pairingId];
+            }
         }
 
         // close the dedicated host process if nothing else is using it
         if (port.sender.url != browser.runtime.getURL('options.html')) {
             activePorts--;
-            if (!activePorts) {
+            if (!activePorts && nativePort) {
                 nativePort.disconnect();
                 nativePort = null;
             }

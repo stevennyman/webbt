@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleIdentifier</key>
+  <string>webbt.server.macos</string>
+  <key>CFBundleName</key>
+  <string>WebBT Server</string>
+  <key>CFBundleDisplayName</key>
+  <string>WebBT Server for Firefox</string>
+  <key>CFBundleVersion</key>
+  <string>{{PRODUCT_VERSION}}</string>
+  <key>CFBundleShortVersionString</key>
+  <string>{{PRODUCT_VERSION}}</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleExecutable</key>
+  <string>BLEServer</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>10.15</string>
+  <key>NSHumanReadableCopyright</key>
+  <string>Copyright © 2026, Steven Nyman. License: MIT.</string>
+  <key>NSBluetoothAlwaysUsageDescription</key>
+  <string>WebBT Server uses Bluetooth to relay Web Bluetooth API calls from Firefox to nearby Bluetooth devices.</string>
+  <key>LSBackgroundOnly</key>
+  <true/>
+  <key>LSUIElement</key>
+  <true/>
+</dict>
+</plist>
