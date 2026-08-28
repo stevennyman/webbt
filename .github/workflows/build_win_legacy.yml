@@ -16,15 +16,8 @@ jobs:
       - name: Compile legacy C++ release
         run: |
           cd BLEServer
-          msbuild BLEServer.sln /p:Configuration=Release /p:Platform=ARM64
           msbuild BLEServer.sln /p:Configuration=Release /p:Platform=x64
           msbuild BLEServer.sln /p:Configuration=Release /p:Platform=x86
-
-      - name: Upload ARM64 artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: BLEServer-Legacy-Cpp-ARM64
-          path: BLEServer\ARM64\Release\BLEServer.exe
 
       - name: Upload x64 artifact
         uses: actions/upload-artifact@v4
@@ -40,7 +33,7 @@ jobs:
 
       - name: Compile legacy installer
         run: |
-          iscc /DLEGACY_CPP /DMyAppVersion=0.5.3 installer\windows\installer.iss
+          iscc /DLEGACY_CPP /DLEGACY_CPP_NO_ARM64 /DMyAppVersion=0.5.3 installer\windows\installer.iss
 
       - name: Upload legacy installer
         uses: actions/upload-artifact@v4

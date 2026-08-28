@@ -70,7 +70,9 @@ Source: "..\..\rust_server\target\aarch64-pc-windows-msvc\release\BLEServer.exe"
 Source: "..\..\rust_server\target\x86_64-pc-windows-msvc\release\BLEServer.exe"; DestDir: "{app}"; Check: PreferX64Files; Flags: ignoreversion
 Source: "..\..\rust_server\target\i686-pc-windows-msvc\release\BLEServer.exe"; DestDir: "{app}"; Check: PreferX86Files; Flags: ignoreversion
 #else
+#ifndef LEGACY_CPP_NO_ARM64
 Source: "..\..\BLEServer\ARM64\Release\BLEServer.exe"; DestDir: "{app}"; Check: PreferArm64Files; Flags: ignoreversion
+#endif
 Source: "..\..\BLEServer\x64\Release\BLEServer.exe"; DestDir: "{app}"; Check: PreferX64Files; Flags: ignoreversion
 Source: "..\..\BLEServer\Release\BLEServer.exe"; DestDir: "{app}"; Check: PreferX86Files; Flags: ignoreversion
 #endif
@@ -93,7 +95,11 @@ var
 
 function PreferArm64Files: Boolean;
 begin
+  #ifdef LEGACY_CPP_NO_ARM64
+  Result := False;
+  #else
   Result := IsArm64;
+  #endif
 end;
 
 function PreferX64Files: Boolean;
