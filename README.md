@@ -18,7 +18,7 @@ This extension enables Web Bluetooth in Firefox on Windows, macOS, and Linux (ex
         * All features generally supported; support is considered experimental because of `bluez` reliability issues with connecting to devices.
 
 > [!TIP]  
-> Experimental support for Linux and macOS is available on the `server-rust` branch.
+> Experimental support for Linux and macOS is available on this branch and will be released soon.
 
 ## Installation
 
