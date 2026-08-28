@@ -146,7 +146,7 @@ begin
     RegQueryDWordValue(HKLM, VccRegLoc2, 'Major', ActualVccMajor);
     RegQueryDWordValue(HKLM, VccRegLoc2, 'Minor', ActualVccMinor);  
   end;
-  if (ActualVccMajor < Cardinal(14)) or ((ActualVccMajor = Cardinal(14)) and (ActualVccMinor < Cardinal(44))) then begin
+  if (ActualVccMajor < Cardinal(14)) or ((ActualVccMajor = Cardinal(14)) and (ActualVccMinor < Cardinal(51))) then begin
     NeedsVcc := True;
   end;
   DownloadPage := CreateDownloadPage(SetupMessage(msgWizardPreparing), SetupMessage(msgPreparingDesc), @OnDownloadProgress);
