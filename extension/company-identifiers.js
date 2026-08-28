@@ -4018,5 +4018,8 @@ const BLUETOOTH_COMPANY_IDENTIFIERS = {
     "4368": "Hamaton Inc.,",
     "4369": "RAPSODO PTE. LTD.",
     "4370": "JustTec GmbH",
-    "4371": "ONXMAPS, INC"
+    "4371": "ONXMAPS, INC",
+    "4372": "Metabowerke GmbH",
+    "4373": "Thermia Aktiebolag",
+    "4374": "ALLRA LIMITED"
 };
