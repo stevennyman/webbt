@@ -355,7 +355,7 @@ function addResolvedAdvertisementMetadata(msg) {
         .map(entry => BLUETOOTH_COMPANY_IDENTIFIERS[entry.companyIdentifier])
         .filter(Boolean);
     if (manufacturerNames.length) {
-        msg.manufacturerName = [...new Set(manufacturerNames)].join(', ');
+        msg.manufacturerNames = [...new Set(manufacturerNames)];
     }
 }
 

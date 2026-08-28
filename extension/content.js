@@ -94,7 +94,7 @@ function portMsg(message) {
                 message.localName,
                 message.gattId,
                 message.appearanceName,
-                message.manufacturerName,
+                message.manufacturerNames,
                 message.rssi,
             );
         }
@@ -180,6 +180,8 @@ class DeviceChooserUI {
         this.createElements();
         this.onCancel = () => null;
         this.onPair = () => null;
+        this.manufacturerNames = new Map();
+        this.appearanceNames = new Map();
         // FIFO queue of pending pairing requests. Each entry: { id, kind, pin, callback }.
         // Only the head of the queue is ever rendered/shown; everything else waits.
         // `current` mirrors the entry currently on screen (or null if none is shown).
@@ -282,7 +284,12 @@ class DeviceChooserUI {
                 .device-metadata {
                     color: #555;
                     font-size: 0.9em;
+                    line-height: 1.2em;
                     margin-top: 2px;
+                    height: 1.2em;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
                 }
 
                 .device-item:hover {
@@ -446,6 +453,10 @@ class DeviceChooserUI {
         this.btnPair = shadowRoot.getElementById('btn-pair');
         this.deviceListElement = shadowRoot.getElementById('device-list');
         this.chooserDialog = shadowRoot.getElementById('chooser-dialog');
+        this.chooserDialog?.addEventListener('close', () => {
+            this.manufacturerNames.clear();
+            this.appearanceNames.clear();
+        });
         this.nobluetooth = shadowRoot.getElementById('nobluetooth');
         this.nobluetooth_ok = shadowRoot.getElementById('nobluetooth_ok');
 
@@ -584,7 +595,7 @@ class DeviceChooserUI {
         this.onPair(this.selectedDeviceId, this.selectedGattId);
     }
 
-    updateDevice(address, name, gattId, appearanceName, manufacturerName, rssi) {
+    updateDevice(address, name, gattId, appearanceName, manufacturerNames, rssi) {
         let deviceElement = this.shadowRoot.querySelector(`.device-item[bluetoothId='${address}']`);
         if (!deviceElement) {
             deviceElement = document.createElement('div');
@@ -623,6 +634,12 @@ class DeviceChooserUI {
             });
             this.deviceListElement.appendChild(deviceElement);
         }
+        const manufacturerNamesForDevice = this.manufacturerNames.get(address) ?? new Set();
+        manufacturerNames?.forEach(name => manufacturerNamesForDevice.add(name));
+        this.manufacturerNames.set(address, manufacturerNamesForDevice);
+        if (appearanceName && !this.appearanceNames.has(address)) {
+            this.appearanceNames.set(address, appearanceName);
+        }
         deviceElement.querySelector('.device-name').textContent = name || address.toUpperCase();
         const signalStrength = deviceElement.querySelector('.signal-strength');
         const signalLevel = Number.isFinite(rssi)
@@ -637,12 +654,15 @@ class DeviceChooserUI {
                 : 'Signal strength unavailable',
         );
         signalStrength.title = signalStrength.getAttribute('aria-label');
-        const metadata = [appearanceName, manufacturerName]
+        const metadata = [this.appearanceNames.get(address), manufacturerNamesForDevice.size
+            ? [...manufacturerNamesForDevice].join(', ')
+            : null]
             .filter(Boolean)
             .join(' | ');
         const metadataElement = deviceElement.querySelector('.device-metadata');
         metadataElement.textContent = metadata;
-        metadataElement.hidden = !metadata;
+        metadataElement.hidden = false;
+        metadataElement.style.visibility = metadata ? 'visible' : 'hidden';
         // TODO handle duplicate device names?
     }
 
