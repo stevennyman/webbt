@@ -17,7 +17,10 @@ jobs:
                 rustup target add aarch64-pc-windows-msvc i686-pc-windows-msvc x86_64-pc-windows-msvc
 
             - name: Compile Rust release
-              run: cmd /c rust_server\build-release.cmd
+              shell: cmd
+              run: |
+                cd /d %GITHUB_WORKSPACE%\rust_server
+                call build-release.cmd
             
             - name: Upload ARM64 artifact
               uses: actions/upload-artifact@v7
