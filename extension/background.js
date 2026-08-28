@@ -223,21 +223,13 @@ function nativePortOnMessage(msg) {
     if (msg._type === 'disconnectEvent') {
         const gattId = msg.device;
         const device = devices[gattId];
-        if (device) {
-            device.forEach(async port => {
-                try {
-                    const webId = await gattIdToWebId(gattId, port);
-                    if (webId !== null) {
-                        port.postMessage({ event: 'disconnectEvent', device: webId });
-                    }
-                    portsObjects.get(port)?.devices.delete(gattId);
-                } catch (error) {
-                    console.error('Unable to forward disconnect event:', error);
-                }
-            });
-            delete characteristicCache[gattId];
-            delete devices[gattId];
-        }
+        const devicePorts = device ? [...device] : [];
+
+        // The page may reconnect synchronously from gattserverdisconnected.
+        // Clean up the old connection first so that a reconnect reusing the
+        // same legacy C++ server GATT ID is not removed by this cleanup.
+        delete characteristicCache[gattId];
+        delete devices[gattId];
         // Purge stale subscriptions so re-subscribe sends fresh CCCD writes
         for (const key of Object.keys(subscriptions)) {
             if (key.startsWith('subscription_' + gattId + '_')) {
@@ -251,6 +243,19 @@ function nativePortOnMessage(msg) {
             if (!subscriptionOrigins[origin].length) {
                 delete subscriptionOrigins[origin];
             }
+        }
+        if (device) {
+            devicePorts.forEach(async port => {
+                try {
+                    const webId = await gattIdToWebId(gattId, port);
+                    if (webId !== null) {
+                        port.postMessage({ event: 'disconnectEvent', device: webId });
+                    }
+                    portsObjects.get(port)?.devices.delete(gattId);
+                } catch (error) {
+                    console.error('Unable to forward disconnect event:', error);
+                }
+            });
         }
     }
 }
@@ -852,9 +857,7 @@ async function gattConnect(port, webId) {
     const connectId = serverApiVersion === 2 && typeof storedGattId === 'string'
         ? storedGattId
         : address.replace(/:/g, '');
-    const gattId = await nativeRequest('connect', {
-        address: connectId,
-    }, port);
+    const gattId = await nativeRequest('connect', { address: connectId }, port);
     if (gattId != null) {
         if (!(port.sender.origin in webIdToGattIdMap)) {
             webIdToGattIdMap[port.sender.origin] = {};
