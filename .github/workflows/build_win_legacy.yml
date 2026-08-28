@@ -4,7 +4,7 @@ on:
 
 jobs:
   Build_Windows_Legacy_CPP:
-    runs-on: windows-latest
+    runs-on: windows-2022
 
     steps:
       - name: Add msbuild to PATH
