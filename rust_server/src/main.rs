@@ -843,6 +843,120 @@ fn start_message_reader()
     receiver
 }
 
+// When macOS sleeps, CoreBluetooth reports the adapter as powered off and btleplug drops its
+// peripherals without cancelling their connections. The links stay up, keep waking the Mac
+// from sleep, and can no longer be closed. Disconnect everything before the system sleeps.
+#[cfg(target_os = "macos")]
+mod macos_sleep {
+    use btleplug::api::{Central, Peripheral};
+    use btleplug::platform::Adapter;
+    use std::ffi::c_void;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    type IONotificationPortRef = *mut c_void;
+    type IOServiceInterestCallback = extern "C" fn(*mut c_void, u32, u32, *mut c_void);
+
+    #[link(name = "IOKit", kind = "framework")]
+    unsafe extern "C" {
+        fn IORegisterForSystemPower(
+            refcon: *mut c_void,
+            the_port_ref: *mut IONotificationPortRef,
+            callback: IOServiceInterestCallback,
+            notifier: *mut u32,
+        ) -> u32;
+        fn IOAllowPowerChange(kernel_port: u32, notification_id: isize) -> i32;
+        fn IONotificationPortGetRunLoopSource(notify: IONotificationPortRef) -> *mut c_void;
+    }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    unsafe extern "C" {
+        static kCFRunLoopDefaultMode: *const c_void;
+        fn CFRunLoopGetCurrent() -> *mut c_void;
+        fn CFRunLoopAddSource(run_loop: *mut c_void, source: *mut c_void, mode: *const c_void);
+        fn CFRunLoopRun();
+    }
+
+    // IOKit/IOMessage.h
+    const IO_MESSAGE_CAN_SYSTEM_SLEEP: u32 = 0xe000_0270;
+    const IO_MESSAGE_SYSTEM_WILL_SLEEP: u32 = 0xe000_0280;
+
+    // Sleep waits for our acknowledgement, so stay well under the system's 30 second limit.
+    const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
+    static ROOT_PORT: AtomicU32 = AtomicU32::new(0);
+
+    struct Context {
+        runtime: tokio::runtime::Handle,
+        central: Arc<Mutex<Option<Adapter>>>,
+    }
+
+    pub fn start(central: Arc<Mutex<Option<Adapter>>>, runtime: tokio::runtime::Handle) {
+        std::thread::spawn(move || {
+            let context = Box::into_raw(Box::new(Context { runtime, central }));
+            let mut notify_port: IONotificationPortRef = std::ptr::null_mut();
+            let mut notifier: u32 = 0;
+            unsafe {
+                let root_port = IORegisterForSystemPower(
+                    context.cast(),
+                    &mut notify_port,
+                    on_power_message,
+                    &mut notifier,
+                );
+                if root_port == 0 {
+                    eprintln!("Unable to register for system sleep notifications");
+                    drop(Box::from_raw(context));
+                    return;
+                }
+                ROOT_PORT.store(root_port, Ordering::SeqCst);
+                CFRunLoopAddSource(
+                    CFRunLoopGetCurrent(),
+                    IONotificationPortGetRunLoopSource(notify_port),
+                    kCFRunLoopDefaultMode,
+                );
+                CFRunLoopRun();
+            }
+        });
+    }
+
+    extern "C" fn on_power_message(
+        refcon: *mut c_void,
+        _service: u32,
+        message_type: u32,
+        message_argument: *mut c_void,
+    ) {
+        match message_type {
+            IO_MESSAGE_CAN_SYSTEM_SLEEP => {}
+            IO_MESSAGE_SYSTEM_WILL_SLEEP => {
+                let context = unsafe { &*(refcon as *const Context) };
+                context.runtime.block_on(async {
+                    let _ = tokio::time::timeout(DISCONNECT_TIMEOUT, disconnect_all(&context.central))
+                        .await;
+                });
+            }
+            _ => return,
+        }
+        unsafe {
+            IOAllowPowerChange(ROOT_PORT.load(Ordering::SeqCst), message_argument as isize);
+        }
+    }
+
+    async fn disconnect_all(central: &Mutex<Option<Adapter>>) {
+        let Some(adapter) = central.lock().ok().and_then(|c| c.clone()) else {
+            return;
+        };
+        let Ok(peripherals) = adapter.peripherals().await else {
+            return;
+        };
+        for peripheral in peripherals {
+            if matches!(peripheral.is_connected().await, Ok(true)) {
+                let _ = peripheral.disconnect().await;
+            }
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let instance = SingleInstance::new("BLEServer")
@@ -859,6 +973,9 @@ async fn main() -> anyhow::Result<()> {
     // currently this just uses the first adapter, a possible future expansion would be to allow selecting an adapter in the UI
     // the Web Bluetooth spec doesn't seem to handle multiple adapters, and btleplug only supports multiple adapters on Linux
     let central = Arc::new(Mutex::new(get_central(&manager).await));
+
+    #[cfg(target_os = "macos")]
+    macos_sleep::start(central.clone(), tokio::runtime::Handle::current());
 
     // Keep looking for an adapter if none was present at startup. This also
     // recreates the event stream after a BlueZ/D-Bus restart.
